@@ -1,18 +1,26 @@
-# TrashNet 6-Class Classifier – ESP32-S3 N16R8 + OV2640
+# TrashNet 6-Class Classifier – ESP32-S3 N16R8
 
-Bộ phân loại rác thải 6 nhóm chạy trên vi điều khiển **ESP32-S3 N16R8**
-(16MB Flash · 8MB Octal PSRAM) với camera **OV2640**,
-sử dụng mô hình **MobileNetV1 1.0** và framework **TFLite Micro** của Espressif.
+Bộ phân loại rác thải 6 nhóm chạy trên **ESP32-S3 N16R8**
+(16MB Flash · 8MB Octal PSRAM), sử dụng **MobileNetV1 1.0 (full INT8)**
+và **TFLite Micro** của Espressif với esp_nn optimized kernels.
 
-| Thông số chip | Giá trị                                  |
-| --------------- | ------------------------------------------ |
-| SoC             | ESP32-S3 (Xtensa LX7 dual-core 240 MHz)    |
-| Flash           | 16 MB – QIO 80 MHz                        |
-| PSRAM           | 8 MB Octal SPI (OPI) 80 MHz                |
-| Camera          | OV2640 (JPEG, tối đa 2MP)                |
-| Framework       | ESP-IDF v5.5.1 + TFLite Micro              |
-| Model input     | 224 × 224 × 3 RGB                        |
-| Inference time  | ~150–300 ms (float) / ~100–200 ms (INT8) |
+Inference được kích hoạt qua **HTTP POST** — chip tạo WiFi hotspot,
+người dùng kết nối và upload ảnh JPEG để nhận kết quả phân loại.
+
+| Thông số        | Giá trị                                        |
+| --------------- | ----------------------------------------------- |
+| SoC             | ESP32-S3 (Xtensa LX7 dual-core 240 MHz)         |
+| Flash           | 16 MB – DIO 80 MHz                              |
+| PSRAM           | 8 MB Octal SPI 80 MHz                           |
+| Framework       | ESP-IDF v5.5.1 + TFLite Micro (esp_nn)          |
+| Model           | MobileNetV1 1.0 – **full INT8** (224×224×3)     |
+| Inference time  | ~150–300 ms (từ PSRAM)                          |
+| WiFi mode       | Access Point – SSID: `TrashNet-ESP32`           |
+| HTTP endpoint   | `POST http://192.168.4.1/infer` (JPEG body)     |
+
+> ⚠️ **Yêu cầu bắt buộc: Model phải là full INT8**
+> esp_nn kernels của ESP32 **không hỗ trợ hybrid quantized model**
+> (weights INT8, I/O FLOAT32). Dùng `models/retrain_int8.py` để tạo model đúng.
 
 ---
 
@@ -22,417 +30,371 @@ sử dụng mô hình **MobileNetV1 1.0** và framework **TFLite Micro** của E
 trash/
 ├── esp-tflite-micro/                        ← thư viện TFLite Micro (đã clone)
 └── trash_classifier/                        ← DỰ ÁN CHÍNH
-    ├── partitions.csv                       ← partition table 16MB (4.5MB/OTA slot)
-    ├── sdkconfig.defaults                   ← cấu hình N16R8 (PSRAM, 240MHz, ...)
-    ├── sdkconfig.defaults.esp32s3           ← override cho target esp32s3
+    ├── idf_env.sh                           ← load ESP-IDF v5.5.1 nhanh
+    ├── partitions.csv                       ← partition table 16MB (4.75MB/OTA)
+    ├── sdkconfig.defaults                   ← cấu hình N16R8 (PSRAM, 240MHz)
+    ├── sdkconfig.defaults.esp32s3           ← console UART0, camera module
     ├── models/
-    │   ├── quantized_and_pruned_model.tflite  ← model gốc (hybrid-quantized)
-    │   ├── convert_to_int8.py               ← script chuyển sang full-INT8
-    │   └── generate_model_cc.sh             ← script xxd → C array
+    │   ├── retrain_int8.py                  ← rebuild + convert → full INT8 ✅
+    │   ├── convert_to_int8.py               ← convert từ float model (nếu có)
+    │   ├── generate_model_cc.sh             ← .tflite → C array (xxd)
+    │   ├── quantized_and_pruned_model.tflite← model gốc (hybrid, KHÔNG dùng)
+    │   └── training/
+    │       ├── pruning-and-quantization-in-keras.ipynb
+    │       └── dataset-resized/dataset-resized/  ← 2527 ảnh, 6 class
     └── main/
-        ├── main.cc                          ← FreeRTOS entry point
-        ├── main_functions.cc                ← CORE: TFLite inference engine
-        ├── model_settings.h/cc              ← nhãn 6 categories + ngưỡng
-        ├── image_provider.cc/h              ← chụp ảnh, JPEG→RGB→crop→resize
-        ├── classification_responder.cc/h    ← in kết quả ra serial + LED
-        ├── trash_model_data.cc/h            ← model nhúng dưới dạng C array
+        ├── main.cc                          ← FreeRTOS entry, WiFi + HTTP init
+        ├── main_functions.cc                ← CORE: TFLite setup() + run_inference()
+        ├── model_settings.h/cc              ← nhãn 6 class + kConfidenceThreshold
+        ├── image_provider.cc/h              ← camera: JPEG→RGB→resize 224×224
+        ├── classification_responder.cc/h    ← in kết quả ra serial
+        ├── wifi_ap.cc/h                     ← WiFi Access Point "TrashNet-ESP32"
+        ├── http_infer.cc/h                  ← HTTP server: POST /infer
+        ├── trash_model_data.cc/h            ← model nhúng dạng C array (DROM)
         ├── app_camera_esp.c/h               ← cấu hình GPIO OV2640
-        ├── esp_cli.c/h                      ← CLI qua UART
-        ├── Kconfig.projbuild                ← menuconfig
-        └── idf_component.yml                ← dependencies (esp-tflite-micro, esp32-camera)
+        └── esp_cli.c/h                      ← CLI test ảnh tĩnh qua UART
 ```
 
 ---
 
-## Môi trường ESP-IDF (đã cài sẵn trên máy này)
+## Môi trường ESP-IDF
 
 | Thành phần | Đường dẫn                                                                |
-| ------------ | ---------------------------------------------------------------------------- |
-| ESP-IDF      | `/home/danz/esp/v5.5.1/esp-idf`                                            |
-| Python venv  | `~/.espressif/python_env/idf5.5_py3.13_env`                                |
-| Toolchain    | `~/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin` |
-| ninja        | `~/.espressif/tools/ninja/1.12.1`                                          |
-| cmake        | hệ thống (`/usr/bin/cmake` v3.28, cài qua `apt`)                      |
+| ----------- | -------------------------------------------------------------------------- |
+| ESP-IDF     | `/home/danz/esp/v5.5.1/esp-idf`                                           |
+| Python venv | `~/.espressif/python_env/idf5.5_py3.13_env`                               |
+| Toolchain   | `~/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin`|
 
-### Load môi trường ESP-IDF
+```bash
+# Load môi trường (chạy mỗi khi mở terminal mới)
+cd /home/danz/Downloads/trash/trash_classifier
+source idf_env.sh
+# Output: ✓ ESP-IDF v5.5.1 loaded (ESP32-S3 N16R8). Use 'idf' command.
+```
 
-File `idf_env.sh` nằm sẵn trong thư mục dự án:
+---
+
+## Bước 0: Tạo model full INT8 (bắt buộc)
+
+Model gốc `quantized_and_pruned_model.tflite` là **hybrid quantized** và
+**không tương thích** với esp_nn kernels của TFLite Micro.
+Phải tạo lại model `trash_model_int8.tflite` trước khi build firmware.
+
+```bash
+cd /home/danz/Downloads/trash/trash_classifier/models
+
+# Cài dependencies (một lần)
+pip install tensorflow pillow numpy --break-system-packages
+
+# Rebuild model + convert sang full INT8
+# (fine-tune 15 epoch head + 5 epoch full → ~15–20 phút)
+python3 retrain_int8.py
+```
+
+Kết quả thành công:
+
+```
+TensorFlow 2.21.0 loaded
+Dataset : training/dataset-resized/dataset-resized
+  cardboard   : 403 images
+  glass       : 501 images
+  metal       : 410 images
+  paper       : 594 images
+  plastic     : 482 images
+  trash       : 137 images
+
+Phase 1: Training head only (15 epochs)...
+✓ Head training done. Best val accuracy: 0.9124
+
+Phase 2: Fine-tuning all layers (5 epochs)...
+✓ Fine-tune done. Best val accuracy: 0.9312
+
+Converting to full INT8 (calibrating activations)...
+✓ Saved: trash_model_int8.tflite  (3516 KB)
+
+Verification:
+  Input  : [1, 224, 224, 3]  int8   scale=0.007874  zp=-1
+  Output : [1, 6]            int8   scale=0.003906  zp=-128
+✓ SUCCESS: Full INT8 – compatible with TFLite Micro esp_nn!
+```
+
+Sau đó nhúng model vào firmware:
+
+```bash
+bash generate_model_cc.sh trash_model_int8.tflite
+# → tự động ghi ra: ../main/trash_model_data.cc
+```
+
+---
+
+## Bước 1: Build firmware
 
 ```bash
 cd /home/danz/Downloads/trash/trash_classifier
-
-# Load môi trường (chạy mỗi khi mở terminal mới)
 source idf_env.sh
 
-# Hoặc dùng đường dẫn tuyệt đối từ bất kỳ đâu:
-source /home/danz/Downloads/trash/trash_classifier/idf_env.sh
-```
+# Xoá sdkconfig cũ để áp dụng defaults mới (nếu chưa làm)
+rm -f sdkconfig
 
-Output:
-
-```
-✓ ESP-IDF v5.5.1 loaded (ESP32-S3 N16R8). Use 'idf' command.
-  IDF_PATH : /home/danz/esp/v5.5.1/esp-idf
-  Toolchain: .../xtensa-esp-elf/esp-14.2.0_20241119/...
-```
-
-> **Tip:** Tự động load mỗi lần mở terminal:
->
-> ```bash
-> echo "source /home/danz/Downloads/trash/trash_classifier/idf_env.sh" >> ~/.bashrc
-> ```
-
----
-
-## Về model: hai chế độ hoạt động
-
-| Chế độ                      | Model                                 | Tốc độ    | Kích thước firmware         |
-| ------------------------------ | ------------------------------------- | ------------ | ------------------------------ |
-| **Float (hiện tại)**   | `quantized_and_pruned_model.tflite` | ~250–300 ms | **4.1 MB** ✓ đã build |
-| **Full INT8 (tối ưu)** | `trash_model_int8.tflite`           | ~100–200 ms | ~0.9 MB                        |
-
-Model gốc `quantized_and_pruned_model.tflite` là **hybrid-quantized** (weights INT8, I/O FLOAT32).
-TFLite Micro hỗ trợ chế độ này — firmware đã build thành công với model này.
-Để tăng tốc, có thể chuyển sang full-INT8 (xem Phần B bên dưới).
-
----
-
-## Phần A – Dùng model hiện có (đã nhúng sẵn)
-
-`trash_model_data.cc` đã được tạo xong với model `quantized_and_pruned_model.tflite`.
-Bỏ qua bước chuyển đổi, chạy thẳng từ **Bước 2: Build**.
-
----
-
-## Phần B – Chuyển đổi model (tuỳ chọn, để tăng tốc)
-
-### B1. Kiểm tra model gốc
-
-```bash
-# Xem thông tin model
-python3 - << 'EOF'
-import struct, sys
-
-path = "/home/danz/Downloads/trash/trash_classifier/models/quantized_and_pruned_model.tflite"
-with open(path, "rb") as f:
-    data = f.read()
-
-print(f"File size : {len(data):,} bytes ({len(data)/1024/1024:.2f} MB)")
-print(f"FlatBuffer magic: {data[4:8]}")   # should be b'TFL3'
-print("Dùng Netron (https://netron.app) để xem chi tiết I/O dtype")
-EOF
-```
-
-Kết quả model gốc:
-
-```
-File size : 3,685,560 bytes (3.51 MB)
-Input  dtype : FLOAT32  ← hybrid quantization (weights INT8, I/O float)
-Output dtype : FLOAT32
-```
-
-### B2. Chuyển sang full-INT8 (cần dataset để calibrate)
-
-```bash
-cd /home/danz/Downloads/trash/trash_classifier/models
-
-# Cài TensorFlow nếu chưa có
-pip install tensorflow pillow numpy
-
-# Option A: dùng ảnh thật từ TrashNet dataset (accuracy cao nhất)
-python3 convert_to_int8.py \
-    --model quantized_and_pruned_model.tflite \
-    --images /đường/dẫn/đến/thư/mục/ảnh \
-    --output trash_model_int8.tflite \
-    --num-samples 200
-
-# Option B: dùng random data (nhanh, ~2% accuracy thấp hơn)
-python3 convert_to_int8.py \
-    --model quantized_and_pruned_model.tflite \
-    --random \
-    --output trash_model_int8.tflite
-```
-
-Kết quả mong đợi:
-
-```
-✓ Saved: trash_model_int8.tflite
-  Input  : shape=[1, 224, 224, 3], dtype=int8   ✓
-  Output : shape=[1, 6], dtype=int8              ✓
-✓ SUCCESS: Model is fully INT8-quantized!
-```
-
-### B3. Nhúng model vào firmware bằng xxd
-
-Đây là quá trình thực tế đã làm với model gốc (áp dụng tương tự cho INT8):
-
-```bash
-cd /home/danz/Downloads/trash/trash_classifier/models
-
-# ── Bước 3a: Kiểm tra kích thước model ──────────────────────────────────────
-ls -lh trash_model_int8.tflite
-# VD: 3.6M quantized_and_pruned_model.tflite  (đã nhúng)
-#     ~900K trash_model_int8.tflite           (INT8 nhỏ hơn nhiều)
-
-# ── Bước 3b: Chuyển .tflite → C array bằng xxd ──────────────────────────────
-# Cách 1: dùng script tự động (khuyến nghị)
-./generate_model_cc.sh trash_model_int8.tflite
-# → tự động ghi ra: ../main/trash_model_data.cc
-
-# Cách 2: thủ công (hiểu rõ từng bước)
-# Bước i – tạo header file trước
-cat > ../main/trash_model_data.cc << 'HEADER'
-/*
- * trash_model_data.cc – AUTO-GENERATED
- * Nguồn: trash_model_int8.tflite
- * Tái tạo: cd models && ./generate_model_cc.sh trash_model_int8.tflite
- */
-#include "trash_model_data.h"
-HEADER
-
-# Bước ii – chạy xxd để tạo hex array, đổi tên symbol cho đúng
-xxd -i trash_model_int8.tflite \
-  | sed 's/^unsigned char .*\[\]/const unsigned char g_trash_model_data[]/' \
-  | sed 's/^unsigned int .*=/const unsigned int g_trash_model_data_len =/' \
-  >> ../main/trash_model_data.cc
-
-# Bước iii – kiểm tra kết quả
-echo "Số dòng :"
-wc -l ../main/trash_model_data.cc
-
-echo "Dòng đầu (header):"
-head -6 ../main/trash_model_data.cc
-
-echo "Dòng cuối (độ dài array):"
-tail -3 ../main/trash_model_data.cc
-```
-
-Kết quả mong đợi sau bước 3b:
-
-```
-Số dòng : 307149   (cho model 3.6MB; ~75K dòng cho INT8 ~900KB)
-Dòng đầu:
-  #include "trash_model_data.h"
-  const unsigned char g_trash_model_data[] = {
-    0x1c, 0x00, 0x00, ...
-Dòng cuối:
-  };
-  const unsigned int g_trash_model_data_len = 3685560;
-```
-
-> ⚠️ **Lưu ý partition table:** Kích thước firmware = kích thước model + ~500KB overhead.
-> Model 3.6MB → firmware 4.1MB → cần OTA slot ≥ 4.5MB (đã cấu hình trong `partitions.csv`).
-> Model INT8 ~900KB → firmware ~1.4MB → slot 3MB là đủ (có thể giảm partition để tiết kiệm).
-
----
-
-## Bước 1: Chuẩn bị model (chọn A hoặc B ở trên)
-
-Model mặc định (`quantized_and_pruned_model.tflite`) **đã được nhúng sẵn** vào
-`main/trash_model_data.cc`. Bạn có thể build và flash ngay mà không cần làm gì thêm.
-
----
-
-## Bước 2: Set target và build
-
-```bash
-# ── Load môi trường ESP-IDF ──────────────────────────────────────────────────
-source ~/idf_env.sh
-# Output: ✓ ESP-IDF v5.5.1 loaded. Use 'idf' command.
-
-# ── Vào thư mục dự án ────────────────────────────────────────────────────────
-cd /home/danz/Downloads/trash/trash_classifier
-
-# ── Lần đầu tiên: đặt target chip ────────────────────────────────────────────
-idf set-target esp32s3
-# Sẽ tạo file sdkconfig từ sdkconfig.defaults + sdkconfig.defaults.esp32s3
-# Output: Set Target to: esp32s3, new sdkconfig will be created.
-
-# ── (Tuỳ chọn) Xem và chỉnh cấu hình thông qua menu ─────────────────────────
-idf menuconfig
-# → Camera Module Selection: chọn đúng board (mặc định: ESP32-S3-EYE)
-
-# ── Build (lần đầu: 5–10 phút; các lần sau: ~30 giây) ────────────────────────
+# Build (~5–10 phút lần đầu, ~30s các lần sau)
 idf build
 ```
 
-Kết quả build thành công (thực tế):
+Kết quả build thành công:
 
 ```
-[1342/1342] Project build complete. To flash, run:
-  idf.py flash
-trash_classifier.bin binary size 0x402540 bytes.
-Smallest app partition is 0x480000 bytes. 0x7dac0 bytes (11%) free.
+trash_classifier.bin binary size 0x496eb0 bytes.
+Smallest app partition is 0x4c0000 bytes. 0x29150 bytes (3%) free.
+Project build complete.
 ```
+
+> ⚠️ **Partition gần đầy (3% còn lại).** Khi model INT8 được nhúng (nhỏ hơn
+> ~3.5MB so với hybrid), firmware sẽ nhỏ lại đáng kể và có nhiều room hơn.
 
 ---
 
-## Bước 3: Flash lên ESP32-S3 N16R8
+## Bước 2: Flash lên ESP32-S3 N16R8
+
+Flash **4 files** theo địa chỉ chính xác:
 
 ```bash
-# ── Tìm cổng của board ───────────────────────────────────────────────────────
-ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
-# ESP32-S3 native USB → /dev/ttyACM0
-# Board dùng CH340/CP2102 → /dev/ttyUSB0
+# Cách 1: idf flash (tự động đọc flash_args)
+idf flash -p /dev/ttyUSB0
 
-# ── Flash qua USB-JTAG native (ESP32-S3 hỗ trợ sẵn, không cần mạch ngoài) ───
-idf flash -p /dev/ttyACM0
-
-# ── Flash qua UART (CH340/CP2102), tốc độ cao hơn ────────────────────────────
-idf flash -p /dev/ttyUSB0 --baud 921600
-
-# ── Flash và mở serial monitor luôn sau khi xong ────────────────────────────
-idf flash monitor -p /dev/ttyACM0
-
-# ── Hoặc dùng lệnh esptool trực tiếp (in sẵn khi build xong) ────────────────
+# Cách 2: esptool thủ công (dùng khi flash qua web hoặc tool ngoài)
 python -m esptool --chip esp32s3 -b 460800 \
     --before default_reset --after hard_reset \
-    write_flash \
-    --flash_mode dio --flash_size 16MB --flash_freq 80m \
+    write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
     0x0      build/bootloader/bootloader.bin \
     0x8000   build/partition_table/partition-table.bin \
     0x13000  build/ota_data_initial.bin \
     0x20000  build/trash_classifier.bin
-
-# ── Chỉ mở monitor (board đã có firmware) ────────────────────────────────────
-idf monitor -p /dev/ttyACM0
-# Thoát monitor: Ctrl+]
 ```
 
-> **N16R8 – nếu flash thất bại:**
-> Giữ nút **BOOT** → nhấn **RESET** một lần → thả **BOOT** → chạy lại `idf flash`.
-> Sau khi flash xong, nhấn **RESET** để khởi động firmware mới.
+| File                        | Địa chỉ  | Vai trò                              |
+| ---------------------------- | --------- | ------------------------------------- |
+| `bootloader.bin`            | `0x0`    | Bootloader (chọn OTA slot)            |
+| `partition-table.bin`       | `0x8000` | Bảng phân vùng                       |
+| `ota_data_initial.bin`      | `0x13000`| Trỏ boot vào `ota_0` (lần đầu)      |
+| `trash_classifier.bin`      | `0x20000`| Firmware chính                        |
+
+> **N16R8 – nếu flash thất bại:** Giữ **BOOT** → nhấn **RESET** → thả **BOOT** → flash lại.
 
 ---
 
-## Kết quả trên Serial Monitor
+## Bước 3: Xem log serial
+
+Console được cấu hình **UART0** (cùng cổng với bootloader):
+
+```bash
+# Linux/Mac
+idf monitor -p /dev/ttyUSB0
+# hoặc
+screen /dev/ttyUSB0 115200
+
+# Windows: mở Serial Monitor tại COM8 (hoặc cổng UART của board), baud 115200
+```
+
+Log khởi động thành công:
 
 ```
-I (1234) main_functions: ─────────────────────────────────────────
-I (1234) main_functions:  TrashNet Inference  (142 ms)
-I (1234) main_functions: ─────────────────────────────────────────
-I (1234) main_functions:     Cardboard   2.1% [####................]
-I (1234) main_functions:     Glass       1.8% [###.................]
-I (1234) main_functions:     Metal       3.4% [######..............]
-I (1234) main_functions: >>  Paper      87.6% [#################...] <<
-I (1234) main_functions:     Plastic     4.1% [########............]
-I (1234) main_functions:     Trash       1.0% [##..................]
-I (1234) main_functions: ─────────────────────────────────────────
-I (1234) main_functions:  RESULT: [PAPER]  87.6%  Paper
-I (1234) main_functions: ─────────────────────────────────────────
+I (xxx) main_functions: ==============================================
+I (xxx) main_functions:  TrashNet Classifier  –  ESP32-S3 + OV2640
+I (xxx) main_functions: ==============================================
+I (xxx) main_functions: Categories  : 6
+I (xxx) main_functions: [0] Cardboard  [1] Glass  [2] Metal
+I (xxx) main_functions: [3] Paper      [4] Plastic [5] Trash
+I (xxx) main_functions: Model loaded from flash (3516000 bytes)
+I (xxx) main_functions: Tensor arena: 828 KB allocated from PSRAM
+I (xxx) main_functions: Input tensor: [1,224,224,3] INT8 scale=0.008 zp=-1
+I (xxx) main_functions: Setup complete – HTTP inference server ready
+I (xxx) wifi_ap: WiFi AP started  SSID: TrashNet-ESP32  IP: 192.168.4.1
+I (xxx) http_infer: HTTP server started on port 80
 ```
 
 ---
 
-## Thông số bộ nhớ (N16R8, model float nhúng vào flash)
+## Bước 4: Sử dụng HTTP inference
 
-| Vùng nhớ      | Kích thước | Vị trí | Mục đích                      |
-| --------------- | ------------- | -------- | -------------------------------- |
-| Model weights   | 3.5 MB        | Flash    | `g_trash_model_data[]` in DROM |
-| Tensor Arena    | 350 KB        | SRAM*    | Activation buffers khi inference |
-| Camera FB (×2) | ~230 KB       | PSRAM    | JPEG frame buffer                |
-| RGB decode buf  | 230 KB        | PSRAM    | Decoded RGB888 (320×240×3)     |
-| Resize scratch  | 150 KB        | PSRAM    | Buffer trung gian 224×224×3    |
+### Kết nối WiFi
 
-*Tensor Arena: ưu tiên SRAM (nhanh hơn 3×), tự động fallback sang PSRAM nếu không đủ.
+1. Trên điện thoại / máy tính, kết nối WiFi: **`TrashNet-ESP32`** (không có mật khẩu)
+2. IP gateway: `192.168.4.1`
+
+### Upload ảnh và nhận kết quả
+
+```bash
+# Dùng curl (Linux/Mac/Windows với curl)
+curl -X POST http://192.168.4.1/infer \
+     -H "Content-Type: image/jpeg" \
+     --data-binary @photo.jpg
+
+# Kết quả JSON:
+{
+  "top_label": "Plastic",
+  "top_score": 0.847,
+  "inference_ms": 285,
+  "scores": {
+    "Cardboard": 0.021,
+    "Glass":     0.043,
+    "Metal":     0.018,
+    "Paper":     0.062,
+    "Plastic":   0.847,
+    "Trash":     0.009
+  }
+}
+```
+
+### Giao diện web đơn giản
+
+Truy cập `http://192.168.4.1` trên trình duyệt → giao diện upload ảnh.
+
+---
+
+## Thông số bộ nhớ (full INT8 model)
+
+| Vùng nhớ       | Kích thước | Vị trí | Mục đích                          |
+| --------------- | ----------- | ------- | ---------------------------------- |
+| Model weights   | ~3.5 MB     | Flash   | `g_trash_model_data[]` in DROM    |
+| Tensor Arena    | 828 KB      | PSRAM   | Activation + scratch buffers      |
+| WiFi / stack    | ~100 KB     | SRAM    | FreeRTOS + LwIP + WiFi driver     |
+| HTTP server     | ~20 KB      | SRAM    | esp_http_server                   |
+| JPEG decode buf | ~920 KB     | PSRAM   | Decode JPEG ảnh upload            |
+
+> **Tại sao arena từ PSRAM?**
+> Full INT8 model: input tensor = 224×224×3×1 = 147 KB + activation buffers ~680 KB.
+> Tổng cần ~828 KB, vượt quá SRAM nội bộ có sẵn. PSRAM 8 MB của N16R8 đủ thừa.
 
 ---
 
 ## Classes (TrashNet 6 nhãn)
 
-| Index | Nhãn     | Tiếng Việt                  |
-| ----- | --------- | ----------------------------- |
-| 0     | Cardboard | Bìa các-tông / giấy cứng |
-| 1     | Glass     | Thủy tinh                    |
-| 2     | Metal     | Kim loại                     |
-| 3     | Paper     | Giấy                         |
-| 4     | Plastic   | Nhựa                         |
-| 5     | Trash     | Rác hỗn hợp                |
+| Index | Label    | Tiếng Việt              | Mẫu train |
+| ----- | --------- | ------------------------ | ---------- |
+| 0     | Cardboard | Bìa các-tông / giấy cứng | 403        |
+| 1     | Glass     | Thủy tinh                | 501        |
+| 2     | Metal     | Kim loại                 | 410        |
+| 3     | Paper     | Giấy                     | 594        |
+| 4     | Plastic   | Nhựa                     | 482        |
+| 5     | Trash     | Rác hỗn hợp              | 137        |
 
 ---
 
 ## Troubleshooting
 
-**`AllocateTensors()` FAILED**
-→ Tăng `kTensorArenaSize` trong `main_functions.cc`. Thử 450KB trước.
+**`Hybrid models are not supported on TFLite Micro`**
+→ Model trong `trash_model_data.cc` là hybrid quantized, không tương thích với esp_nn.
+→ Chạy: `python3 models/retrain_int8.py` → `bash models/generate_model_cc.sh trash_model_int8.tflite`
+
+**`AllocateTensors() FAILED` + `Didn't find op for builtin opcode 'FULLY_CONNECTED'`**
+→ Op chưa được đăng ký trong `MicroMutableOpResolver`.
+→ Kiểm tra `main_functions.cc`: phải có `micro_op_resolver.AddFullyConnected()`.
+
+**`FATAL: Input tensor type is NOT INT8`**
+→ Model vẫn là FLOAT32 I/O (hybrid). Tạo lại model với `retrain_int8.py`.
+
+**Không thấy log sau dòng `entry 0x403c8938`**
+→ Firmware đang log ra USB Serial/JTAG thay vì UART.
+→ Kiểm tra `sdkconfig.defaults.esp32s3` phải có `CONFIG_ESP_CONSOLE_UART_DEFAULT=y`.
+→ Xem log đúng trên cổng UART (COM8 trên Windows, /dev/ttyUSB0 trên Linux).
 
 **Camera init failed**
-→ Kiểm tra GPIO. Chạy `idf menuconfig` → Camera Module Selection.
+→ Camera đang bị comment (HTTP inference mode không cần camera).
+→ Để bật: bỏ comment `[CAMERA MODE]` trong `main.cc` và `main_functions.cc`.
 
-**Inference rất chậm (>500ms)**
-→ Kiểm tra `CONFIG_NN_OPTIMIZED=y` trong `sdkconfig`.
-→ Đảm bảo CPU ở 240MHz: `idf menuconfig` → `ESP System Settings → CPU frequency`.
-
-**Input tensor type không khớp**→ Mở `main_functions.cc` xem `s_input->type`:
-
-- `kTfLiteFloat32` = model float (hiện tại), input dùng `s_input->data.f`
-- `kTfLiteInt8` = model INT8, input dùng `s_input->data.int8`
-
-**Low confidence liên tục (<50%)**
-→ Giảm `kConfidenceThreshold` trong `model_settings.h`.
-→ Đảm bảo ánh sáng đủ, vật thể chiếm >60% khung hình.
+**Inference trả về 0% hoặc kết quả sai**
+→ Kiểm tra log: model có load thành công không? (`Model loaded from flash`)
+→ Kiểm tra ảnh upload có đúng định dạng JPEG không.
+→ Kiểm tra kích thước ảnh: `http_infer.cc` resize về 224×224 trước khi inference.
 
 **Partition table overflow khi build**
-→ Kiểm tra kích thước firmware: `ls -lh build/trash_classifier.bin`
-→ Tăng kích thước OTA slot trong `partitions.csv` (hiện tại: 4.5MB = `0x480000`)
+→ Kiểm tra `ls -lh build/trash_classifier.bin`
+→ Partition OTA hiện tại: 4.75 MB (`0x4C0000`). Tăng thêm trong `partitions.csv` nếu cần.
 
 ---
 
 ## Training
 
-Notebook huấn luyện nằm tại `models/training/pruning-and-quantization-in-keras.ipynb`.
-Dataset TrashNet (không được track bởi git vì kích thước lớn) đặt tại:
+### Dataset TrashNet
 
 ```
 models/training/
-├── pruning-and-quantization-in-keras.ipynb  ← tracked ✓
+├── pruning-and-quantization-in-keras.ipynb  ← notebook gốc
 ├── dataset-resized.zip                      ← gitignored (43MB)
-└── dataset-resized/
-    └── dataset-resized/
-        ├── cardboard/   (403 ảnh, 512×384 JPEG)
-        ├── glass/       (501 ảnh)
-        ├── metal/       (410 ảnh)
-        ├── paper/       (594 ảnh)
-        ├── plastic/     (482 ảnh)
-        └── trash/       (137 ảnh)
+└── dataset-resized/dataset-resized/
+    ├── cardboard/   (403 ảnh, 512×384 JPEG)
+    ├── glass/       (501 ảnh)
+    ├── metal/       (410 ảnh)
+    ├── paper/       (594 ảnh)
+    ├── plastic/     (482 ảnh)
+    └── trash/       (137 ảnh)
 ```
-
-Để có dataset, giải nén:
 
 ```bash
+# Giải nén dataset
 cd models/training && unzip dataset-resized.zip
 ```
+
+### Workflow tạo model (full INT8)
+
+```
+Dataset → retrain_int8.py → trash_model_int8.tflite
+                                    ↓
+                         generate_model_cc.sh
+                                    ↓
+                         main/trash_model_data.cc  (C array)
+                                    ↓
+                              idf build + flash
+```
+
+Tại sao không dùng notebook gốc? Notebook lưu model vào `tempfile.mkstemp()` nên
+file bị xoá khi đóng session. `retrain_int8.py` rebuild cùng kiến trúc (MobileNetV1 +
+Flatten + Dense(6)) và convert thẳng sang full INT8 mà không qua hybrid.
+
+---
+
+## Bật Camera Mode (tuỳ chọn)
+
+Firmware hiện tại dùng HTTP inference (không cần camera). Để bật live camera:
+
+**1. Bỏ comment trong `main/main.cc`:**
+```cpp
+// while (true) {
+//     loop();          ← bỏ comment 2 dòng này
+// }
+```
+
+**2. Bỏ comment trong `main/main_functions.cc` (block `[CAMERA MODE]`):**
+```cpp
+// #ifndef CLI_ONLY_INFERENCE
+//     TfLiteStatus cam_status = InitCamera();   ← bỏ comment block này
+//     ...
+// #endif
+```
+
+**3. Build lại.**
 
 ---
 
 ## Hướng dẫn mở rộng
 
-### A – Thêm/bớt ảnh test CLI (không đổi số class)
+### A – Thêm/bớt ảnh test CLI
 
 Hệ thống ảnh test gồm **3 thành phần phải đồng bộ**:
 
-| File                                   | Vai trò                                              |
-| -------------------------------------- | ----------------------------------------------------- |
-| `static_images/CMakeLists.txt`       | Khai báo EMBED_FILES → nhúng vào firmware         |
-| `main/esp_cli.c`                     | `IMAGE_COUNT`, extern symbols, `image_database[]` |
-| `static_images/sample_images/imageN` | File raw RGB888, 224×224×3 = 150,528 bytes          |
+| File                             | Vai trò                                            |
+| --------------------------------- | --------------------------------------------------- |
+| `static_images/CMakeLists.txt`  | Khai báo `EMBED_FILES` → nhúng vào firmware        |
+| `main/esp_cli.c`                | `IMAGE_COUNT`, extern symbols, `image_database[]`  |
+| `static_images/sample_images/`  | File raw RGB888, 224×224×3 = 150,528 bytes mỗi file|
 
-> **Tại sao hiện tại là 10 ảnh?**
-> Kế thừa từ `person_detection` gốc của Espressif (2 class × 5 ảnh = 10).
-> Với 6 class, 10 ảnh nghĩa là 4 class có 2 mẫu, 2 class chỉ có 1 mẫu — không đều.
-> Số ảnh tối ưu cho trash_classifier là **bội số của 6** (6, 12, 18…).
+> **Số ảnh tối ưu = bội số 6** (6, 12, 18…) để mỗi class có số mẫu bằng nhau.
+> Hiện tại: 12 ảnh (2 ảnh/class).
 
-> **Lưu ý bộ nhớ:**
-> Mỗi ảnh 224×224 RGB = 147 KB được **nhúng thẳng vào firmware binary** (DROM).
-> Firmware hiện tại ≈ 4.0 MB. Partition OTA = 4.5 MB → còn ~500 KB dư.
-> Tối đa thêm được: 500 KB ÷ 147 KB ≈ **3 ảnh nữa** trước khi cần tăng partition.
-
-#### Ví dụ: đổi thành 12 ảnh (2 ảnh/class, cân bằng hoàn toàn)
-
-**Bước 1 – Tạo 2 ảnh còn thiếu (paper×2, trash×2)**
+#### Ví dụ: tạo 12 ảnh cân bằng (2 ảnh/class)
 
 ```bash
-cd /home/danz/Downloads/trash/trash_classifier   # thư mục gốc dự án
+cd /home/danz/Downloads/trash/trash_classifier
 
 python3 << 'EOF'
 from PIL import Image
@@ -440,11 +402,9 @@ import os
 
 DATASET = "models/training/dataset-resized/dataset-resized"
 OUT     = "static_images/sample_images"
+os.makedirs(OUT, exist_ok=True)
 
-# Thêm ảnh thứ 2 cho paper (image6 → paper2) và trash (image7 → trash2)
-# Hiện tại image6=cardboard2, image7=glass2, image8=metal2, image9=plastic2
-# Thay image6,7 thành paper2,trash2; đẩy cardboard2,glass2 lên image10,11
-new_plan = [
+plan = [
     ("cardboard", 0, "image0"),  ("glass",    0, "image1"),
     ("metal",     0, "image2"),  ("paper",    0, "image3"),
     ("plastic",   0, "image4"),  ("trash",    0, "image5"),
@@ -453,143 +413,45 @@ new_plan = [
     ("plastic",   1, "image10"), ("trash",    1, "image11"),
 ]
 
-for cls, idx, outname in new_plan:
-    files = sorted(os.listdir(os.path.join(DATASET, cls)))
-    img   = Image.open(os.path.join(DATASET, cls, files[idx])).convert("RGB").resize((224, 224))
+for cls, idx, outname in plan:
+    files = sorted(f for f in os.listdir(os.path.join(DATASET, cls))
+                   if not f.startswith('.'))
+    img = Image.open(os.path.join(DATASET, cls, files[idx])).convert("RGB").resize((224,224))
     with open(os.path.join(OUT, outname), "wb") as f:
         f.write(img.tobytes())
     print(f"✓ {outname} ← {cls}/{files[idx]}")
 EOF
 ```
 
-**Bước 2 – Cập nhật `static_images/CMakeLists.txt`**
-
+Cập nhật `static_images/CMakeLists.txt`:
 ```cmake
-idf_component_register(
-    SRCS "" INCLUDE_DIRS ""
-    EMBED_FILES "sample_images/image0"  "sample_images/image1"
-                "sample_images/image2"  "sample_images/image3"
-                "sample_images/image4"  "sample_images/image5"
-                "sample_images/image6"  "sample_images/image7"
-                "sample_images/image8"  "sample_images/image9"
-                "sample_images/image10" "sample_images/image11")
+EMBED_FILES "sample_images/image0"  "sample_images/image1"
+            "sample_images/image2"  "sample_images/image3"
+            "sample_images/image4"  "sample_images/image5"
+            "sample_images/image6"  "sample_images/image7"
+            "sample_images/image8"  "sample_images/image9"
+            "sample_images/image10" "sample_images/image11"
 ```
 
-**Bước 3 – Cập nhật `main/esp_cli.c`**
+Cập nhật `main/esp_cli.c`: `#define IMAGE_COUNT 12`
 
-```c
-#define IMAGE_COUNT 12   // ← đổi từ 10
+### B – Thêm class mới
 
-// Thêm 2 dòng extern:
-extern const uint8_t image10_start[] asm("_binary_image10_start");
-extern const uint8_t image11_start[] asm("_binary_image11_start");
-
-// Thêm trong image_database_init():
-image_database[10] = (uint8_t *) image10_start;
-image_database[11] = (uint8_t *) image11_start;
-```
-
-**Bước 4 – Build và kiểm tra**
-
-```bash
-source ./idf_env.sh
-idf build
-# Firmware phải < 4.5MB (partition OTA)
-ls -lh build/trash_classifier.bin
-```
-
----
-
-### B – Thêm loại rác mới (tăng số class)
-
-Đây là thay đổi **toàn diện** — cần sửa model, code, và ảnh test.
-Ví dụ: thêm class **"Battery"** (pin) thành class thứ 7.
-
-#### B1 – Chuẩn bị dataset và retrain
-
-```bash
-# Thêm thư mục class mới vào dataset (≥100 ảnh)
-mkdir models/training/dataset-resized/dataset-resized/battery
-# Copy ảnh vào thư mục này...
-
-# Mở notebook để retrain:
-jupyter notebook models/training/pruning-and-quantization-in-keras.ipynb
-# → Sửa num_classes=7, chạy lại toàn bộ
-# → Export: new_model.tflite
-```
-
-#### B2 – Cập nhật `main/model_settings.h`
-
-```cpp
-constexpr int kCategoryCount = 7;   // ← 6 → 7
-
-// Thêm index mới
-constexpr int kBatteryIndex = 6;
-```
-
-#### B3 – Cập nhật `main/model_settings.cc`
-
-```cpp
-const char* kCategoryLabels[kCategoryCount] = {
-    "Cardboard", "Glass", "Metal", "Paper", "Plastic", "Trash",
-    "Battery",   // ← thêm
-};
-const char* kCategoryEmoji[kCategoryCount] = {
-    "📦", "🍾", "🔩", "📄", "🧴", "🗑️",
-    "🔋",        // ← thêm
-};
-```
-
-#### B4 – Nhúng model mới
-
-```bash
-cd models
-
-# Chuyển sang INT8 (nếu cần):
-python3 convert_to_int8.py \
-    --model new_model.tflite \
-    --images training/dataset-resized/dataset-resized \
-    --output new_model_int8.tflite
-
-# Tạo C array
-./generate_model_cc.sh new_model_int8.tflite
-# → ghi ra: ../main/trash_model_data.cc  (tự động overwrite)
-```
-
-#### B5 – Thêm 1 ảnh test cho class mới
-
-```bash
-# Tạo raw image cho battery (imageN)
-python3 -c "
-from PIL import Image
-img = Image.open('models/training/dataset-resized/dataset-resized/battery/battery1.jpg')
-img = img.convert('RGB').resize((224,224))
-with open('static_images/sample_images/image12', 'wb') as f:
-    f.write(img.tobytes())
-print('Done')
-"
-
-# Cập nhật CMakeLists.txt: thêm \"sample_images/image12\"
-# Cập nhật esp_cli.c: IMAGE_COUNT=13, thêm extern + database init
-```
-
-#### B6 – Build lại
-
-```bash
-source ./idf_env.sh
-rm -f sdkconfig   # bắt buộc khi đổi model (tensor shape thay đổi)
-idf build
-idf flash -p /dev/ttyACM0
-```
+1. **Dataset:** thêm thư mục class mới vào `models/training/dataset-resized/dataset-resized/`
+2. **Retrain:** chỉnh `CLASSES` trong `retrain_int8.py`, chạy lại
+3. **Model settings:** sửa `kCategoryCount` và `kCategoryLabels[]` trong `model_settings.h/cc`
+4. **Nhúng model:** `bash models/generate_model_cc.sh trash_model_int8.tflite`
+5. **Build:** `rm -f sdkconfig && idf build`
 
 ---
 
 ## Quy tắc tổng quát
 
-| Muốn làm gì                             | Files cần sửa                                                         |
-| ------------------------------------------ | ----------------------------------------------------------------------- |
-| Thêm/bớt ảnh test                       | `static_images/CMakeLists.txt` + `main/esp_cli.c` + file raw        |
-| Đổi ảnh test (cùng số lượng)        | Chỉ thay file raw, build lại                                          |
-| Thêm/bớt class                           | `model_settings.h/cc` + retrain + nhúng model mới + thêm ảnh test |
-| Thay model (cùng class, cùng resolution) | Chỉ`./generate_model_cc.sh` + build lại                             |
-| Đổi resolution input                     | `model_settings.h` (kNumCols/kNumRows) + retrain + convert ảnh       |
+| Muốn làm gì                           | Files cần sửa                                                        |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| Thêm/bớt ảnh test CLI                 | `static_images/CMakeLists.txt` + `main/esp_cli.c` + file raw        |
+| Đổi ảnh test (cùng số lượng)          | Chỉ thay file raw, build lại                                         |
+| Thêm class mới                         | `model_settings.h/cc` + retrain + nhúng model + thêm ảnh test       |
+| Thay model (cùng class, cùng size)    | `generate_model_cc.sh` + build lại                                   |
+| Đổi resolution input                   | `model_settings.h` (kNumCols/kNumRows) + retrain + convert ảnh       |
+| Đổi sang full camera mode             | Bỏ comment `[CAMERA MODE]` trong `main.cc` + `main_functions.cc`    |

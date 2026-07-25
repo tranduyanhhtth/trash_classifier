@@ -228,11 +228,13 @@ void setup() {
                  s_input->dims->data[2], s_input->dims->data[3]);
         return;
     }
+    // Full INT8 is required – esp_nn optimised kernels do not support hybrid models.
+    // Run: python3 models/retrain_int8.py  to create a compatible model.
     if (s_input->type != kTfLiteInt8) {
-        ESP_LOGW(TAG, "Input tensor type is NOT INT8 (got %d) – FLOAT32 path will be used.",
-                 s_input->type);
-        ESP_LOGW(TAG, "  For better performance, re-export with full INT8 quantization.");
-        // Do NOT return – run_inference() handles FLOAT32 input correctly.
+        ESP_LOGE(TAG, "FATAL: Input tensor type is NOT INT8 (got %d).", s_input->type);
+        ESP_LOGE(TAG, "  esp_nn kernels require full INT8 quantization.");
+        ESP_LOGE(TAG, "  Run: python3 models/retrain_int8.py");
+        return;
     }
 
     ESP_LOGI(TAG, "Setup complete – HTTP inference server ready");
@@ -251,47 +253,36 @@ void setup() {
 // Helper: dequantize int8 output tensor → float probabilities
 // ---------------------------------------------------------------------------
 /**
- * @brief  Convert raw INT8 logits from the output tensor into float
- *         probabilities [0.0, 1.0] using the tensor's quantization parameters.
+ * @brief  Dequantize INT8 output tensor to float probabilities.
  *
- * Formula:
- *   float_val = (int8_val - zero_point) × scale
+ * Formula: float_val = (int8_val - zero_point) * scale
  *
- * NOTE: For full-INT8 models the output IS already softmax (the op is fused
- *       into the model).  We just dequantize and we get probabilities.
- *       The values will sum to approximately 1.0.
+ * The output IS already softmax (fused into the model). Values sum to ~1.0.
  *
- * @param output_tensor  Pointer to the interpreter output tensor.
- * @param out_scores     Float array of length kCategoryCount to fill.
+ * @param output_tensor  Pointer to the interpreter output tensor (must be INT8).
+ * @param out_scores     Float array of length kCategoryCount.
  */
 static void dequantize_output(TfLiteTensor* output_tensor,
                                float out_scores[kCategoryCount]) {
-    const float scale      = output_tensor->params.scale;
-    const int   zero_point = output_tensor->params.zero_point;
-
-    if (output_tensor->type == kTfLiteInt8) {
-        const int8_t* raw = output_tensor->data.int8;
-        float sum = 0.0f;
-        for (int i = 0; i < kCategoryCount; i++) {
-            out_scores[i] = (raw[i] - zero_point) * scale;
-            // Clamp to [0, 1] to guard against degenerate quantization params
-            if (out_scores[i] < 0.0f) out_scores[i] = 0.0f;
-            if (out_scores[i] > 1.0f) out_scores[i] = 1.0f;
-            sum += out_scores[i];
-        }
-        // Renormalize if numerical drift causes sum ≠ 1.0
-        if (sum > 0.0f) {
-            for (int i = 0; i < kCategoryCount; i++) out_scores[i] /= sum;
-        }
-    } else if (output_tensor->type == kTfLiteFloat32) {
-        // Hybrid quantized model – output is already float
-        const float* raw = output_tensor->data.f;
-        for (int i = 0; i < kCategoryCount; i++) {
-            out_scores[i] = raw[i];
-        }
-    } else {
-        ESP_LOGE("dequant", "Unsupported output type: %d", output_tensor->type);
+    if (output_tensor->type != kTfLiteInt8) {
+        ESP_LOGE("dequant", "Output tensor is not INT8 (got %d). Use a full INT8 model.",
+                 output_tensor->type);
         memset(out_scores, 0, sizeof(float) * kCategoryCount);
+        return;
+    }
+    const float   scale      = output_tensor->params.scale;
+    const int     zero_point = output_tensor->params.zero_point;
+    const int8_t* raw        = output_tensor->data.int8;
+    float sum = 0.0f;
+    for (int i = 0; i < kCategoryCount; i++) {
+        out_scores[i] = (raw[i] - zero_point) * scale;
+        if (out_scores[i] < 0.0f) out_scores[i] = 0.0f;
+        if (out_scores[i] > 1.0f) out_scores[i] = 1.0f;
+        sum += out_scores[i];
+    }
+    // Renormalize if numerical drift causes sum ≠ 1.0
+    if (sum > 0.0f) {
+        for (int i = 0; i < kCategoryCount; i++) out_scores[i] /= sum;
     }
 }
 
@@ -384,26 +375,12 @@ void run_inference(void* ptr) {
     const uint8_t* raw_pixels = (const uint8_t*)ptr;
     const int      total_bytes = kNumCols * kNumRows * kNumChannels;
 
-    // ── Fill input tensor (handles both FLOAT32 and INT8 models) ─────────
-    if (s_input->type == kTfLiteFloat32) {
-        // Hybrid quantized model: weights INT8, I/O FLOAT32
-        // Normalize uint8 [0,255] → float [0.0, 1.0]
-        float* dst = s_input->data.f;
-        for (int i = 0; i < total_bytes; i++) {
-            dst[i] = raw_pixels[i] / 255.0f;
-        }
-        ESP_LOGD(TAG, "Input type: FLOAT32, normalized [0,1]");
-    } else if (s_input->type == kTfLiteInt8) {
-        // Full INT8 model: uint8 [0,255] → int8 [-128,127] via XOR 0x80
-        // Valid only if quantization: scale=1/128, zero_point=-128
-        for (int i = 0; i < total_bytes; i++) {
-            s_input->data.int8[i] = (int8_t)(raw_pixels[i] ^ 0x80);
-        }
-        ESP_LOGD(TAG, "Input type: INT8, scale=%.4f zp=%d",
-                 s_input->params.scale, s_input->params.zero_point);
-    } else {
-        ESP_LOGE(TAG, "Unsupported input tensor type: %d", s_input->type);
-        return;
+    // ── Convert uint8 RGB → int8 (full INT8 model required) ──────────────
+    // uint8 [0, 255]  →  int8 [-128, 127]  via XOR 0x80 (same as subtract 128)
+    // Equivalent: (int8_t)((int)pixel - 128)
+    // This matches the input quantization: scale = 1/128, zero_point = -128.
+    for (int i = 0; i < total_bytes; i++) {
+        s_input->data.int8[i] = (int8_t)(raw_pixels[i] ^ 0x80);
     }
 
     // ── Invoke ────────────────────────────────────────────────────────────
