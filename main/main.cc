@@ -15,6 +15,8 @@
 #include "freertos/task.h"
 #include "esp_main.h"
 #include "esp_cli.h"
+#include "wifi_ap.h"
+#include "http_infer.h"
 
 static const char* TAG = "main";
 
@@ -24,7 +26,9 @@ void tf_main(void) {
     ESP_LOGI(TAG, " github.com/espressif/esp-tflite-micro       ");
     ESP_LOGI(TAG, "==============================================");
 
-    setup();
+    setup();          // TFLite init (model + camera)
+    wifi_ap_start();              // Create WiFi hotspot
+    http_infer_server_start();    // Start HTTP server on :80
     esp_cli_start();  // start CLI for optional serial-triggered inference
 
 #if CLI_ONLY_INFERENCE

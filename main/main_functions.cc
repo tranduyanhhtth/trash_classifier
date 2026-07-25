@@ -112,6 +112,10 @@ static uint8_t* s_tensor_arena = nullptr;
 
 }  // anonymous namespace
 
+// ─── Shared inference result (read by http_infer.c) ──────────────────────────
+// Must be defined here (C++ TU) but declared extern "C" in main_functions.h.
+extern "C" InferenceResult_t g_last_result = {};
+
 // ---------------------------------------------------------------------------
 // setup()  –  called once from tf_main() before the inference loop
 // ---------------------------------------------------------------------------
@@ -405,4 +409,11 @@ void run_inference(void* ptr) {
     float top_score = scores[top_index];
 
     RespondToClassification(scores, top_index, top_score, inference_ms);
+
+    // ── Persist result for HTTP server ────────────────────────────────────────
+    for (int i = 0; i < kCategoryCount; i++) g_last_result.scores[i] = scores[i];
+    g_last_result.top_index    = top_index;
+    g_last_result.top_score    = top_score;
+    g_last_result.inference_ms = inference_ms;
+    g_last_result.valid        = true;
 }

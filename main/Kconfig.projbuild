@@ -1,5 +1,22 @@
 menu  "Application Configuration"
 
+menu "WiFi Inference AP"
+
+config INFER_AP_SSID
+    string "Access Point SSID"
+    default "TrashNet-ESP32"
+    help
+        SSID of the WiFi hotspot created by ESP32-S3.
+        Connect to this from your phone/laptop, then open http://192.168.4.1
+
+config INFER_AP_PASSWORD
+    string "Access Point Password"
+    default "trashnet"
+    help
+        Password for the hotspot. Leave empty for open network.
+
+endmenu
+
 config TFLITE_USE_BSP
     bool
     default n
