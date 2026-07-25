@@ -160,29 +160,33 @@ void setup() {
     //
     // MobileNetV1 architecture requires these ops (verify in Netron):
     //   Conv2D             → first conv + 1×1 pointwise convs
-    //   DepthwiseConv2D    → depthwise separable convs (the key MobileNet op)
-    //   FullyConnected     → final classifier head (Dense layer)
-    //   Shape              → dynamic shape op (produced by Flatten() in TFLite conversion)
-    //   AveragePool2D      → global average pooling before classifier head
-    //   Reshape            → flatten after pooling
-    //   Softmax            → final classification output
-    //   Add                → residual connections (MobileNetV2 only; safe to include)
-    //   Quantize           → dequantize input layer (full-INT8 models)
-    //   Dequantize         → quantize output layer  (full-INT8 models)
+    // Exact op list obtained by inspecting trash_model_int8.tflite:
     //
-    static tflite::MicroMutableOpResolver<12> micro_op_resolver;
+    //   python3 -c "
+    //   import tensorflow as tf
+    //   from tensorflow.lite.python import schema_py_generated as schema_fb
+    //   with open('models/trash_model_int8.tflite','rb') as f: buf=bytearray(f.read())
+    //   m=schema_fb.ModelT.InitFromPackedBuf(buf,0)
+    //   names={v:k for k,v in vars(schema_fb.BuiltinOperator).items() if isinstance(v,int)}
+    //   ops={names[m.operatorCodes[op.opcodeIndex].builtinCode]
+    //        for sg in m.subgraphs for op in sg.operators}
+    //   print(sorted(ops))"
+    //
+    //   → CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, PACK,
+    //     RESHAPE, SHAPE, SOFTMAX, STRIDED_SLICE
+    //
+    // SHAPE + STRIDED_SLICE + PACK: produced by Flatten() layer during
+    // full-INT8 TFLite conversion (dynamic shape path).
+    //
+    static tflite::MicroMutableOpResolver<8> micro_op_resolver;
     micro_op_resolver.AddConv2D();
     micro_op_resolver.AddDepthwiseConv2D();
-    micro_op_resolver.AddFullyConnected();   // ← classifier head (Dense layer)
-    micro_op_resolver.AddShape();            // ← Flatten() → dynamic shape
-    micro_op_resolver.AddAveragePool2D();
+    micro_op_resolver.AddFullyConnected();
+    micro_op_resolver.AddShape();
+    micro_op_resolver.AddStridedSlice();
+    micro_op_resolver.AddPack();
     micro_op_resolver.AddReshape();
     micro_op_resolver.AddSoftmax();
-    micro_op_resolver.AddAdd();
-    micro_op_resolver.AddQuantize();
-    micro_op_resolver.AddDequantize();
-    micro_op_resolver.AddMul();
-    micro_op_resolver.AddPad();
 
     // ── 4. Build the interpreter ──────────────────────────────────────────
     static tflite::MicroInterpreter static_interpreter(
