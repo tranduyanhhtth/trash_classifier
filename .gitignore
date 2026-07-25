@@ -1,0 +1,35 @@
+# ESP-IDF build output
+build/
+
+# ESP-IDF component manager cache
+managed_components/
+dependencies.lock
+
+# sdkconfig (generated from sdkconfig.defaults, do not commit)
+sdkconfig
+
+# Generated INT8 model (user generates locally)
+models/trash_model_int8.tflite
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Linux editor backups
+*~
+*.swp
+*.swo
+sdkconfig.old
