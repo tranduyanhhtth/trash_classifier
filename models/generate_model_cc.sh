@@ -48,7 +48,8 @@ cat > "$OUTPUT" << HEADER
 #include "trash_model_data.h"
 
 // Model data array (stored in DROM / read-only flash)
-const unsigned char g_trash_model_data[] = {
+// alignas(8): guarantees 8-byte aligned 64-bit access (required by FlatBuffers parser)
+alignas(8) const unsigned char g_trash_model_data[] = {
 HEADER
 
 # Step 4: Extract just the hex bytes (skip the "unsigned char name[] = {" line)
