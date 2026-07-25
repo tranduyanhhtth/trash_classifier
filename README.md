@@ -54,29 +54,31 @@ trash/
 | ninja          | `~/.espressif/tools/ninja/1.12.1`                                      |
 | cmake          | hệ thống (`/usr/bin/cmake` v3.28, cài qua `apt`)                       |
 
-### Tạo file helper để load môi trường một lần
+### Load môi trường ESP-IDF
+
+File `idf_env.sh` nằm sẵn trong thư mục dự án:
 
 ```bash
-cat > ~/idf_env.sh << 'EOF'
-# ESP-IDF v5.5.1 – ESP32-S3 N16R8
-export IDF_PATH=/home/danz/esp/v5.5.1/esp-idf
-export IDF_PYTHON_ENV_PATH=/home/danz/.espressif/python_env/idf5.5_py3.13_env
+cd /home/danz/Downloads/trash/trash_classifier
 
-XTENSA=/home/danz/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin
-RISCV=/home/danz/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/bin
-NINJA=/home/danz/.espressif/tools/ninja/1.12.1
-OPENOCD=/home/danz/.espressif/tools/openocd-esp32/v0.12.0-esp32-20250707/openocd-esp32/bin
-ULP=/home/danz/.espressif/tools/esp32ulp-elf/2.38_20240113/esp32ulp-elf/bin
+# Load môi trường (chạy mỗi khi mở terminal mới)
+source idf_env.sh
 
-export PATH="$XTENSA:$RISCV:$NINJA:$OPENOCD:$ULP:$IDF_PATH/tools:$PATH"
-alias idf="$IDF_PYTHON_ENV_PATH/bin/python $IDF_PATH/tools/idf.py"
-echo "✓ ESP-IDF v5.5.1 loaded. Use 'idf' command."
-EOF
-
-chmod +x ~/idf_env.sh
+# Hoặc dùng đường dẫn tuyệt đối từ bất kỳ đâu:
+source /home/danz/Downloads/trash/trash_classifier/idf_env.sh
 ```
 
-> Mỗi lần mở terminal mới, chạy `source ~/idf_env.sh` trước khi dùng lệnh `idf`.
+Output:
+```
+✓ ESP-IDF v5.5.1 loaded (ESP32-S3 N16R8). Use 'idf' command.
+  IDF_PATH : /home/danz/esp/v5.5.1/esp-idf
+  Toolchain: .../xtensa-esp-elf/esp-14.2.0_20241119/...
+```
+
+> **Tip:** Tự động load mỗi lần mở terminal:
+> ```bash
+> echo "source /home/danz/Downloads/trash/trash_classifier/idf_env.sh" >> ~/.bashrc
+> ```
 
 ---
 
