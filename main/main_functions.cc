@@ -162,6 +162,7 @@ void setup() {
     //   Conv2D             → first conv + 1×1 pointwise convs
     //   DepthwiseConv2D    → depthwise separable convs (the key MobileNet op)
     //   FullyConnected     → final classifier head (Dense layer)
+    //   Shape              → dynamic shape op (produced by Flatten() in TFLite conversion)
     //   AveragePool2D      → global average pooling before classifier head
     //   Reshape            → flatten after pooling
     //   Softmax            → final classification output
@@ -169,10 +170,11 @@ void setup() {
     //   Quantize           → dequantize input layer (full-INT8 models)
     //   Dequantize         → quantize output layer  (full-INT8 models)
     //
-    static tflite::MicroMutableOpResolver<11> micro_op_resolver;
+    static tflite::MicroMutableOpResolver<12> micro_op_resolver;
     micro_op_resolver.AddConv2D();
     micro_op_resolver.AddDepthwiseConv2D();
     micro_op_resolver.AddFullyConnected();   // ← classifier head (Dense layer)
+    micro_op_resolver.AddShape();            // ← Flatten() → dynamic shape
     micro_op_resolver.AddAveragePool2D();
     micro_op_resolver.AddReshape();
     micro_op_resolver.AddSoftmax();
