@@ -2,22 +2,22 @@
 # ===================================================
 # Total flash: 16MB = 16,777,216 bytes = 0x1000000
 #
-# App binary with embedded model + WiFi/HTTP server ≈ 4.57MB (0x491ef0)
-# → App slot must be >= 0x4c0000 (4.75MB with margin)
+# App binary with embedded model + WiFi/HTTP server ≈ 4.6MB
+# OTA slot = 0x500000 (5MB) → ~10% headroom for future growth
 #
 # Layout:
-#   Bootloader + PT : 0x0000 – 0x1FFFF  (128KB reserved)
-#   ota_0           : 0x20000  – 0x4DFFFF (4.75MB)
-#   ota_1           : 0x4E0000 – 0x99FFFF (4.75MB)
-#   model (spiffs)  : 0x9A0000 – 0xB9FFFF (2MB, for future INT8 model)
-#   storage (spiffs): 0xBA0000 – 0xFFFFFF (4.375MB)
+#   Bootloader + PT : 0x00000  – 0x1FFFF  (128 KB reserved by ESP-IDF)
+#   ota_0           : 0x20000  – 0x51FFFF (5 MB)
+#   ota_1           : 0x520000 – 0xA1FFFF (5 MB)
+#   model (spiffs)  : 0xA20000 – 0xC1FFFF (2 MB, reserved for future SPIFFS model)
+#   storage (spiffs): 0xC20000 – 0xFFFFFF (3.875 MB)
 #
 # Name,     Type,  SubType,  Offset,    Size,      Flags
 nvs,        data,  nvs,      0xd000,    0x6000,
 otadata,    data,  ota,      0x13000,   0x2000,
 phy_init,   data,  phy,      0x15000,   0x1000,
-ota_0,      app,   ota_0,    0x20000,   0x4c0000,
-ota_1,      app,   ota_1,    0x4E0000,  0x4c0000,
-model,      data,  spiffs,   0x9A0000,  0x200000,
-storage,    data,  spiffs,   0xBA0000,  0x460000,
+ota_0,      app,   ota_0,    0x20000,   0x500000,
+ota_1,      app,   ota_1,    0x520000,  0x500000,
+model,      data,  spiffs,   0xA20000,  0x200000,
+storage,    data,  spiffs,   0xC20000,  0x3E0000,
 
