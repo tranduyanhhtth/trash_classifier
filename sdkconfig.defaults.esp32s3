@@ -15,6 +15,10 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 CONFIG_CAMERA_MODULE_ESP_S3_EYE=y
 # CONFIG_ESPTOOLPY_NO_STUB=y
+# Console: use UART0 (same port as bootloader) so all logs appear on one COM port.
+# Bootloader always uses UART0; keeping the app on UART0 avoids needing two ports.
+# To switch to native USB Serial/JTAG: set CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y instead.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 # CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # display driver dettings
