@@ -234,10 +234,10 @@ void setup() {
         return;
     }
     if (s_input->type != kTfLiteInt8) {
-        ESP_LOGE(TAG, "FATAL: Input tensor type is NOT INT8 (got %d).", s_input->type);
-        ESP_LOGE(TAG, "  Your model has FLOAT32 I/O (hybrid quantized).");
-        ESP_LOGE(TAG, "  Re-export with full integer quantization. See convert_to_int8.py");
-        return;
+        ESP_LOGW(TAG, "Input tensor type is NOT INT8 (got %d) – FLOAT32 path will be used.",
+                 s_input->type);
+        ESP_LOGW(TAG, "  For better performance, re-export with full INT8 quantization.");
+        // Do NOT return – run_inference() handles FLOAT32 input correctly.
     }
 
     ESP_LOGI(TAG, "Setup complete – starting inference loop");
@@ -376,18 +376,39 @@ void loop() {
  */
 void run_inference(void* ptr) {
     if (!s_interpreter || !s_input) {
-        ESP_LOGE(TAG, "Interpreter not ready");
+        ESP_LOGE(TAG, "Interpreter not ready – setup() may have failed");
+        // Populate error result so HTTP returns meaningful JSON
+        memset(g_last_result.scores, 0, sizeof(g_last_result.scores));
+        g_last_result.top_index = 0;
+        g_last_result.top_score = 0.0f;
+        g_last_result.inference_ms = -1;
+        g_last_result.valid = false;
         return;
     }
 
     const uint8_t* raw_pixels = (const uint8_t*)ptr;
     const int      total_bytes = kNumCols * kNumRows * kNumChannels;
 
-    // ── Convert uint8 RGB → int8 quantized ───────────────────────────────
-    // Each uint8 pixel [0,255] maps to int8 [-128,127] via XOR 0x80.
-    // This assumes input tensor quantization: scale=1/128, zero_point=-128.
-    for (int i = 0; i < total_bytes; i++) {
-        s_input->data.int8[i] = (int8_t)(raw_pixels[i] ^ 0x80);
+    // ── Fill input tensor (handles both FLOAT32 and INT8 models) ─────────
+    if (s_input->type == kTfLiteFloat32) {
+        // Hybrid quantized model: weights INT8, I/O FLOAT32
+        // Normalize uint8 [0,255] → float [0.0, 1.0]
+        float* dst = s_input->data.f;
+        for (int i = 0; i < total_bytes; i++) {
+            dst[i] = raw_pixels[i] / 255.0f;
+        }
+        ESP_LOGD(TAG, "Input type: FLOAT32, normalized [0,1]");
+    } else if (s_input->type == kTfLiteInt8) {
+        // Full INT8 model: uint8 [0,255] → int8 [-128,127] via XOR 0x80
+        // Valid only if quantization: scale=1/128, zero_point=-128
+        for (int i = 0; i < total_bytes; i++) {
+            s_input->data.int8[i] = (int8_t)(raw_pixels[i] ^ 0x80);
+        }
+        ESP_LOGD(TAG, "Input type: INT8, scale=%.4f zp=%d",
+                 s_input->params.scale, s_input->params.zero_point);
+    } else {
+        ESP_LOGE(TAG, "Unsupported input tensor type: %d", s_input->type);
+        return;
     }
 
     // ── Invoke ────────────────────────────────────────────────────────────
@@ -408,9 +429,12 @@ void run_inference(void* ptr) {
     int   top_index = argmax(scores, kCategoryCount);
     float top_score = scores[top_index];
 
+    ESP_LOGI(TAG, "Inference: %s (%.1f%%)  %lld ms",
+             kCategoryLabels[top_index], top_score * 100.0f, (long long)inference_ms);
+
     RespondToClassification(scores, top_index, top_score, inference_ms);
 
-    // ── Persist result for HTTP server ────────────────────────────────────────
+    // ── Persist result for HTTP server ────────────────────────────────────
     for (int i = 0; i < kCategoryCount; i++) g_last_result.scores[i] = scores[i];
     g_last_result.top_index    = top_index;
     g_last_result.top_score    = top_score;

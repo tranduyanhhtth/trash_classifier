@@ -281,8 +281,17 @@ static esp_err_t handle_infer(httpd_req_t *req)
     }
 
     /* ── Run TFLite inference ────────────────────────────────────────── */
+    ESP_LOGI(TAG, "Calling run_inference()...");
     run_inference((void *)img224);
     heap_caps_free(img224); img224 = NULL;
+
+    /* Check if inference actually ran */
+    if (!g_last_result.valid) {
+        snprintf(resp, sizeof(resp),
+                 "{\"error\":\"Inference failed: interpreter not ready. "
+                 "Check serial log via USB Serial/JTAG.\"}");
+        goto send_json;
+    }
 
     /* ── Build JSON response ─────────────────────────────────────────── */
     {
