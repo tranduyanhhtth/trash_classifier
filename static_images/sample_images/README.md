@@ -27,12 +27,21 @@ qua CLI **không cần camera** (chế độ `CLI_ONLY_INFERENCE`).
 
 ## Tái tạo từ dataset
 
+Dataset TrashNet nằm tại `models/training/dataset-resized/dataset-resized/` trong dự án.  
+Nếu chưa có, giải nén từ `models/training/dataset-resized.zip`.
+
 ```bash
+# Giải nén dataset (nếu cần)
+cd models/training
+unzip dataset-resized.zip
+
+# Tái tạo sample images từ dataset thật
 python3 << 'EOF'
 from PIL import Image
 import os
 
-DATASET = "/home/danz/Downloads/trash/training/dataset-resized/dataset-resized"
+# Path tương đối từ thư mục gốc dự án
+DATASET = "models/training/dataset-resized/dataset-resized"
 OUT     = "static_images/sample_images"
 W, H    = 224, 224
 

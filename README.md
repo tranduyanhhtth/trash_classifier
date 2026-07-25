@@ -375,3 +375,221 @@ I (1234) main_functions: ──────────────────�
 **Partition table overflow khi build**
 → Kiểm tra kích thước firmware: `ls -lh build/trash_classifier.bin`
 → Tăng kích thước OTA slot trong `partitions.csv` (hiện tại: 4.5MB = `0x480000`)
+
+---
+
+## Training
+
+Notebook huấn luyện nằm tại `models/training/pruning-and-quantization-in-keras.ipynb`.  
+Dataset TrashNet (không được track bởi git vì kích thước lớn) đặt tại:
+
+```
+models/training/
+├── pruning-and-quantization-in-keras.ipynb  ← tracked ✓
+├── dataset-resized.zip                      ← gitignored (43MB)
+└── dataset-resized/
+    └── dataset-resized/
+        ├── cardboard/   (403 ảnh, 512×384 JPEG)
+        ├── glass/       (501 ảnh)
+        ├── metal/       (410 ảnh)
+        ├── paper/       (594 ảnh)
+        ├── plastic/     (482 ảnh)
+        └── trash/       (137 ảnh)
+```
+
+Để có dataset, giải nén:
+```bash
+cd models/training && unzip dataset-resized.zip
+```
+
+---
+
+## Hướng dẫn mở rộng
+
+### A – Thêm/bớt ảnh test CLI (không đổi số class)
+
+Hệ thống ảnh test gồm **3 thành phần phải đồng bộ**:
+
+| File | Vai trò |
+|------|---------|
+| `static_images/CMakeLists.txt` | Khai báo EMBED_FILES → nhúng vào firmware |
+| `main/esp_cli.c` | `IMAGE_COUNT`, extern symbols, `image_database[]` |
+| `static_images/sample_images/imageN` | File raw RGB888, 224×224×3 = 150,528 bytes |
+
+> **Tại sao hiện tại là 10 ảnh?**  
+> Kế thừa từ `person_detection` gốc của Espressif (2 class × 5 ảnh = 10).  
+> Với 6 class, 10 ảnh nghĩa là 4 class có 2 mẫu, 2 class chỉ có 1 mẫu — không đều.  
+> Số ảnh tối ưu cho trash_classifier là **bội số của 6** (6, 12, 18…).
+
+> **Lưu ý bộ nhớ:**  
+> Mỗi ảnh 224×224 RGB = 147 KB được **nhúng thẳng vào firmware binary** (DROM).  
+> Firmware hiện tại ≈ 4.0 MB. Partition OTA = 4.5 MB → còn ~500 KB dư.  
+> Tối đa thêm được: 500 KB ÷ 147 KB ≈ **3 ảnh nữa** trước khi cần tăng partition.
+
+#### Ví dụ: đổi thành 12 ảnh (2 ảnh/class, cân bằng hoàn toàn)
+
+**Bước 1 – Tạo 2 ảnh còn thiếu (paper×2, trash×2)**
+
+```bash
+cd /home/danz/Downloads/trash/trash_classifier   # thư mục gốc dự án
+
+python3 << 'EOF'
+from PIL import Image
+import os
+
+DATASET = "models/training/dataset-resized/dataset-resized"
+OUT     = "static_images/sample_images"
+
+# Thêm ảnh thứ 2 cho paper (image6 → paper2) và trash (image7 → trash2)
+# Hiện tại image6=cardboard2, image7=glass2, image8=metal2, image9=plastic2
+# Thay image6,7 thành paper2,trash2; đẩy cardboard2,glass2 lên image10,11
+new_plan = [
+    ("cardboard", 0, "image0"),  ("glass",    0, "image1"),
+    ("metal",     0, "image2"),  ("paper",    0, "image3"),
+    ("plastic",   0, "image4"),  ("trash",    0, "image5"),
+    ("cardboard", 1, "image6"),  ("glass",    1, "image7"),
+    ("metal",     1, "image8"),  ("paper",    1, "image9"),
+    ("plastic",   1, "image10"), ("trash",    1, "image11"),
+]
+
+for cls, idx, outname in new_plan:
+    files = sorted(os.listdir(os.path.join(DATASET, cls)))
+    img   = Image.open(os.path.join(DATASET, cls, files[idx])).convert("RGB").resize((224, 224))
+    with open(os.path.join(OUT, outname), "wb") as f:
+        f.write(img.tobytes())
+    print(f"✓ {outname} ← {cls}/{files[idx]}")
+EOF
+```
+
+**Bước 2 – Cập nhật `static_images/CMakeLists.txt`**
+
+```cmake
+idf_component_register(
+    SRCS "" INCLUDE_DIRS ""
+    EMBED_FILES "sample_images/image0"  "sample_images/image1"
+                "sample_images/image2"  "sample_images/image3"
+                "sample_images/image4"  "sample_images/image5"
+                "sample_images/image6"  "sample_images/image7"
+                "sample_images/image8"  "sample_images/image9"
+                "sample_images/image10" "sample_images/image11")
+```
+
+**Bước 3 – Cập nhật `main/esp_cli.c`**
+
+```c
+#define IMAGE_COUNT 12   // ← đổi từ 10
+
+// Thêm 2 dòng extern:
+extern const uint8_t image10_start[] asm("_binary_image10_start");
+extern const uint8_t image11_start[] asm("_binary_image11_start");
+
+// Thêm trong image_database_init():
+image_database[10] = (uint8_t *) image10_start;
+image_database[11] = (uint8_t *) image11_start;
+```
+
+**Bước 4 – Build và kiểm tra**
+
+```bash
+source ./idf_env.sh
+idf build
+# Firmware phải < 4.5MB (partition OTA)
+ls -lh build/trash_classifier.bin
+```
+
+---
+
+### B – Thêm loại rác mới (tăng số class)
+
+Đây là thay đổi **toàn diện** — cần sửa model, code, và ảnh test.  
+Ví dụ: thêm class **"Battery"** (pin) thành class thứ 7.
+
+#### B1 – Chuẩn bị dataset và retrain
+
+```bash
+# Thêm thư mục class mới vào dataset (≥100 ảnh)
+mkdir models/training/dataset-resized/dataset-resized/battery
+# Copy ảnh vào thư mục này...
+
+# Mở notebook để retrain:
+jupyter notebook models/training/pruning-and-quantization-in-keras.ipynb
+# → Sửa num_classes=7, chạy lại toàn bộ
+# → Export: new_model.tflite
+```
+
+#### B2 – Cập nhật `main/model_settings.h`
+
+```cpp
+constexpr int kCategoryCount = 7;   // ← 6 → 7
+
+// Thêm index mới
+constexpr int kBatteryIndex = 6;
+```
+
+#### B3 – Cập nhật `main/model_settings.cc`
+
+```cpp
+const char* kCategoryLabels[kCategoryCount] = {
+    "Cardboard", "Glass", "Metal", "Paper", "Plastic", "Trash",
+    "Battery",   // ← thêm
+};
+const char* kCategoryEmoji[kCategoryCount] = {
+    "📦", "🍾", "🔩", "📄", "🧴", "🗑️",
+    "🔋",        // ← thêm
+};
+```
+
+#### B4 – Nhúng model mới
+
+```bash
+cd models
+
+# Chuyển sang INT8 (nếu cần):
+python3 convert_to_int8.py \
+    --model new_model.tflite \
+    --images training/dataset-resized/dataset-resized \
+    --output new_model_int8.tflite
+
+# Tạo C array
+./generate_model_cc.sh new_model_int8.tflite
+# → ghi ra: ../main/trash_model_data.cc  (tự động overwrite)
+```
+
+#### B5 – Thêm 1 ảnh test cho class mới
+
+```bash
+# Tạo raw image cho battery (imageN)
+python3 -c "
+from PIL import Image
+img = Image.open('models/training/dataset-resized/dataset-resized/battery/battery1.jpg')
+img = img.convert('RGB').resize((224,224))
+with open('static_images/sample_images/image12', 'wb') as f:
+    f.write(img.tobytes())
+print('Done')
+"
+
+# Cập nhật CMakeLists.txt: thêm \"sample_images/image12\"
+# Cập nhật esp_cli.c: IMAGE_COUNT=13, thêm extern + database init
+```
+
+#### B6 – Build lại
+
+```bash
+source ./idf_env.sh
+rm -f sdkconfig   # bắt buộc khi đổi model (tensor shape thay đổi)
+idf build
+idf flash -p /dev/ttyACM0
+```
+
+---
+
+## Quy tắc tổng quát
+
+| Muốn làm gì | Files cần sửa |
+|-------------|--------------|
+| Thêm/bớt ảnh test | `static_images/CMakeLists.txt` + `main/esp_cli.c` + file raw |
+| Đổi ảnh test (cùng số lượng) | Chỉ thay file raw, build lại |
+| Thêm/bớt class | `model_settings.h/cc` + retrain + nhúng model mới + thêm ảnh test |
+| Thay model (cùng class, cùng resolution) | Chỉ `./generate_model_cc.sh` + build lại |
+| Đổi resolution input | `model_settings.h` (kNumCols/kNumRows) + retrain + convert ảnh |
+

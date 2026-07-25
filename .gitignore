@@ -5,6 +5,12 @@ build/
 managed_components/
 dependencies.lock
 
+# Training dataset (too large for git – download separately)
+# Notebook is tracked; dataset is not
+models/training/dataset-resized/
+models/training/dataset-resized.zip
+models/training/__MACOSX/
+
 # sdkconfig (generated from sdkconfig.defaults, do not commit)
 sdkconfig
 
