@@ -99,8 +99,11 @@ constexpr int kScratchBufSize = 60 * 1024;  // 60 KB
 constexpr int kScratchBufSize = 0;
 #endif
 
-// 768 KB covers FLOAT32 I/O MobileNetV1 224×224 (input alone = 588 KB)
-constexpr int kTensorArenaSize = 768 * 1024 + kScratchBufSize;
+// 1280 KB covers full-INT8 MobileNetV1 224×224 with Flatten (not GlobalAvgPool).
+// Flatten → Dense(6) path: activation buffer = 50,176 × 1B = 49 KB for Dense input,
+// but intermediate SHAPE/STRIDED_SLICE/PACK tensors add significant scratch overhead.
+// Measured minimum: 1,206,848 bytes (1,179 KB). Using 1280 KB for ~8% headroom.
+constexpr int kTensorArenaSize = 1280 * 1024 + kScratchBufSize;
 
 static uint8_t* s_tensor_arena = nullptr;
 
