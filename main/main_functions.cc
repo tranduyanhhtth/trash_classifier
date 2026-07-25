@@ -161,6 +161,7 @@ void setup() {
     // MobileNetV1 architecture requires these ops (verify in Netron):
     //   Conv2D             → first conv + 1×1 pointwise convs
     //   DepthwiseConv2D    → depthwise separable convs (the key MobileNet op)
+    //   FullyConnected     → final classifier head (Dense layer)
     //   AveragePool2D      → global average pooling before classifier head
     //   Reshape            → flatten after pooling
     //   Softmax            → final classification output
@@ -168,13 +169,10 @@ void setup() {
     //   Quantize           → dequantize input layer (full-INT8 models)
     //   Dequantize         → quantize output layer  (full-INT8 models)
     //
-    // Using MicroMutableOpResolver (NOT AllOpsResolver) avoids linking unused
-    // ops and saves ~50-100 KB of flash.
-    //
-    // Template parameter = maximum number of ops to register (must be ≥ actual count).
-    static tflite::MicroMutableOpResolver<10> micro_op_resolver;
+    static tflite::MicroMutableOpResolver<11> micro_op_resolver;
     micro_op_resolver.AddConv2D();
     micro_op_resolver.AddDepthwiseConv2D();
+    micro_op_resolver.AddFullyConnected();   // ← classifier head (Dense layer)
     micro_op_resolver.AddAveragePool2D();
     micro_op_resolver.AddReshape();
     micro_op_resolver.AddSoftmax();
@@ -237,16 +235,16 @@ void setup() {
         // Do NOT return – run_inference() handles FLOAT32 input correctly.
     }
 
-    ESP_LOGI(TAG, "Setup complete – starting inference loop");
+    ESP_LOGI(TAG, "Setup complete – HTTP inference server ready");
 
-    // ── 7. Initialise camera ───────────────────────────────────────────────
-#ifndef CLI_ONLY_INFERENCE
-    TfLiteStatus cam_status = InitCamera();
-    if (cam_status != kTfLiteOk) {
-        ESP_LOGE(TAG, "InitCamera() failed");
-        return;
-    }
-#endif
+    // ── 7. [CAMERA MODE] Camera initialisation ────────────────────────────
+    // #ifndef CLI_ONLY_INFERENCE
+    //     TfLiteStatus cam_status = InitCamera();
+    //     if (cam_status != kTfLiteOk) {
+    //         ESP_LOGE(TAG, "InitCamera() failed");
+    //         return;
+    //     }
+    // #endif
 }
 
 // ---------------------------------------------------------------------------

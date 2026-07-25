@@ -36,10 +36,14 @@ void tf_main(void) {
     esp_cli_register_inference_command();
     vTaskDelay(portMAX_DELAY);
 #else
-    // Camera live-capture mode: run inference as fast as possible
-    while (true) {
-        loop();
-    }
+    // ── [CAMERA MODE] ────────────────────────────────────────────────────
+    // while (true) {
+    //     loop();
+    // }
+    // ────────────────────────────────────────────────────────────────────
+
+    // HTTP inference mode: inference triggered by POST /infer requests.
+    vTaskDelay(portMAX_DELAY);
 #endif
 }
 
