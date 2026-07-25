@@ -14,10 +14,15 @@ ULP=/home/danz/.espressif/tools/esp32ulp-elf/2.38_20240113/esp32ulp-elf/bin
 export PATH="$XTENSA:$RISCV:$NINJA:$OPENOCD:$ULP:$IDF_PATH/tools:$PATH"
 
 # Function thay vì alias (hoạt động khi source trong mọi shell)
+# Dùng được cả "idf build" lẫn "idf.py build"
 idf() {
     "$IDF_PYTHON_ENV_PATH/bin/python" "$IDF_PATH/tools/idf.py" "$@"
 }
+idf.py() {
+    "$IDF_PYTHON_ENV_PATH/bin/python" "$IDF_PATH/tools/idf.py" "$@"
+}
 export -f idf
+export -f idf.py
 
 echo "✓ ESP-IDF v5.5.1 loaded (ESP32-S3 N16R8). Use 'idf' command."
 echo "  IDF_PATH : $IDF_PATH"

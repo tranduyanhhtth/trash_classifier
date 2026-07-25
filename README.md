@@ -1,18 +1,18 @@
 # TrashNet 6-Class Classifier – ESP32-S3 N16R8 + OV2640
 
-Bộ phân loại rác thải 6 nhóm chạy trên vi điều khiển **ESP32-S3 N16R8**  
-(16MB Flash · 8MB Octal PSRAM) với camera **OV2640**,  
+Bộ phân loại rác thải 6 nhóm chạy trên vi điều khiển **ESP32-S3 N16R8**
+(16MB Flash · 8MB Octal PSRAM) với camera **OV2640**,
 sử dụng mô hình **MobileNetV1 1.0** và framework **TFLite Micro** của Espressif.
 
-| Thông số chip   | Giá trị                                    |
-|-----------------|--------------------------------------------|
+| Thông số chip | Giá trị                                  |
+| --------------- | ------------------------------------------ |
 | SoC             | ESP32-S3 (Xtensa LX7 dual-core 240 MHz)    |
-| Flash           | 16 MB – QIO 80 MHz                         |
+| Flash           | 16 MB – QIO 80 MHz                        |
 | PSRAM           | 8 MB Octal SPI (OPI) 80 MHz                |
-| Camera          | OV2640 (JPEG, tối đa 2MP)                  |
+| Camera          | OV2640 (JPEG, tối đa 2MP)                |
 | Framework       | ESP-IDF v5.5.1 + TFLite Micro              |
-| Model input     | 224 × 224 × 3 RGB                          |
-| Inference time  | ~150–300 ms (float) / ~100–200 ms (INT8)   |
+| Model input     | 224 × 224 × 3 RGB                        |
+| Inference time  | ~150–300 ms (float) / ~100–200 ms (INT8) |
 
 ---
 
@@ -46,13 +46,13 @@ trash/
 
 ## Môi trường ESP-IDF (đã cài sẵn trên máy này)
 
-| Thành phần     | Đường dẫn                                                              |
-|----------------|------------------------------------------------------------------------|
-| ESP-IDF        | `/home/danz/esp/v5.5.1/esp-idf`                                        |
-| Python venv    | `~/.espressif/python_env/idf5.5_py3.13_env`                            |
-| Toolchain      | `~/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin` |
-| ninja          | `~/.espressif/tools/ninja/1.12.1`                                      |
-| cmake          | hệ thống (`/usr/bin/cmake` v3.28, cài qua `apt`)                       |
+| Thành phần | Đường dẫn                                                                |
+| ------------ | ---------------------------------------------------------------------------- |
+| ESP-IDF      | `/home/danz/esp/v5.5.1/esp-idf`                                            |
+| Python venv  | `~/.espressif/python_env/idf5.5_py3.13_env`                                |
+| Toolchain    | `~/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin` |
+| ninja        | `~/.espressif/tools/ninja/1.12.1`                                          |
+| cmake        | hệ thống (`/usr/bin/cmake` v3.28, cài qua `apt`)                      |
 
 ### Load môi trường ESP-IDF
 
@@ -69,6 +69,7 @@ source /home/danz/Downloads/trash/trash_classifier/idf_env.sh
 ```
 
 Output:
+
 ```
 ✓ ESP-IDF v5.5.1 loaded (ESP32-S3 N16R8). Use 'idf' command.
   IDF_PATH : /home/danz/esp/v5.5.1/esp-idf
@@ -76,6 +77,7 @@ Output:
 ```
 
 > **Tip:** Tự động load mỗi lần mở terminal:
+>
 > ```bash
 > echo "source /home/danz/Downloads/trash/trash_classifier/idf_env.sh" >> ~/.bashrc
 > ```
@@ -84,20 +86,20 @@ Output:
 
 ## Về model: hai chế độ hoạt động
 
-| Chế độ             | Model                              | Tốc độ       | Kích thước firmware |
-|--------------------|------------------------------------|--------------|---------------------|
-| **Float (hiện tại)** | `quantized_and_pruned_model.tflite` | ~250–300 ms  | **4.1 MB** ✓ đã build |
-| **Full INT8 (tối ưu)** | `trash_model_int8.tflite`        | ~100–200 ms  | ~0.9 MB             |
+| Chế độ                      | Model                                 | Tốc độ    | Kích thước firmware         |
+| ------------------------------ | ------------------------------------- | ------------ | ------------------------------ |
+| **Float (hiện tại)**   | `quantized_and_pruned_model.tflite` | ~250–300 ms | **4.1 MB** ✓ đã build |
+| **Full INT8 (tối ưu)** | `trash_model_int8.tflite`           | ~100–200 ms | ~0.9 MB                        |
 
-Model gốc `quantized_and_pruned_model.tflite` là **hybrid-quantized** (weights INT8, I/O FLOAT32).  
-TFLite Micro hỗ trợ chế độ này — firmware đã build thành công với model này.  
+Model gốc `quantized_and_pruned_model.tflite` là **hybrid-quantized** (weights INT8, I/O FLOAT32).
+TFLite Micro hỗ trợ chế độ này — firmware đã build thành công với model này.
 Để tăng tốc, có thể chuyển sang full-INT8 (xem Phần B bên dưới).
 
 ---
 
 ## Phần A – Dùng model hiện có (đã nhúng sẵn)
 
-`trash_model_data.cc` đã được tạo xong với model `quantized_and_pruned_model.tflite`.  
+`trash_model_data.cc` đã được tạo xong với model `quantized_and_pruned_model.tflite`.
 Bỏ qua bước chuyển đổi, chạy thẳng từ **Bước 2: Build**.
 
 ---
@@ -122,6 +124,7 @@ EOF
 ```
 
 Kết quả model gốc:
+
 ```
 File size : 3,685,560 bytes (3.51 MB)
 Input  dtype : FLOAT32  ← hybrid quantization (weights INT8, I/O float)
@@ -151,6 +154,7 @@ python3 convert_to_int8.py \
 ```
 
 Kết quả mong đợi:
+
 ```
 ✓ Saved: trash_model_int8.tflite
   Input  : shape=[1, 224, 224, 3], dtype=int8   ✓
@@ -204,6 +208,7 @@ tail -3 ../main/trash_model_data.cc
 ```
 
 Kết quả mong đợi sau bước 3b:
+
 ```
 Số dòng : 307149   (cho model 3.6MB; ~75K dòng cho INT8 ~900KB)
 Dòng đầu:
@@ -215,15 +220,15 @@ Dòng cuối:
   const unsigned int g_trash_model_data_len = 3685560;
 ```
 
-> ⚠️ **Lưu ý partition table:** Kích thước firmware = kích thước model + ~500KB overhead.  
-> Model 3.6MB → firmware 4.1MB → cần OTA slot ≥ 4.5MB (đã cấu hình trong `partitions.csv`).  
+> ⚠️ **Lưu ý partition table:** Kích thước firmware = kích thước model + ~500KB overhead.
+> Model 3.6MB → firmware 4.1MB → cần OTA slot ≥ 4.5MB (đã cấu hình trong `partitions.csv`).
 > Model INT8 ~900KB → firmware ~1.4MB → slot 3MB là đủ (có thể giảm partition để tiết kiệm).
 
 ---
 
 ## Bước 1: Chuẩn bị model (chọn A hoặc B ở trên)
 
-Model mặc định (`quantized_and_pruned_model.tflite`) **đã được nhúng sẵn** vào  
+Model mặc định (`quantized_and_pruned_model.tflite`) **đã được nhúng sẵn** vào
 `main/trash_model_data.cc`. Bạn có thể build và flash ngay mà không cần làm gì thêm.
 
 ---
@@ -252,6 +257,7 @@ idf build
 ```
 
 Kết quả build thành công (thực tế):
+
 ```
 [1342/1342] Project build complete. To flash, run:
   idf.py flash
@@ -293,8 +299,8 @@ idf monitor -p /dev/ttyACM0
 # Thoát monitor: Ctrl+]
 ```
 
-> **N16R8 – nếu flash thất bại:**  
-> Giữ nút **BOOT** → nhấn **RESET** một lần → thả **BOOT** → chạy lại `idf flash`.  
+> **N16R8 – nếu flash thất bại:**
+> Giữ nút **BOOT** → nhấn **RESET** một lần → thả **BOOT** → chạy lại `idf flash`.
 > Sau khi flash xong, nhấn **RESET** để khởi động firmware mới.
 
 ---
@@ -320,13 +326,13 @@ I (1234) main_functions: ──────────────────�
 
 ## Thông số bộ nhớ (N16R8, model float nhúng vào flash)
 
-| Vùng nhớ         | Kích thước  | Vị trí   | Mục đích                         |
-|-----------------|------------|----------|-----------------------------------|
-| Model weights   | 3.5 MB      | Flash    | `g_trash_model_data[]` in DROM    |
-| Tensor Arena    | 350 KB      | SRAM*    | Activation buffers khi inference  |
-| Camera FB (×2)  | ~230 KB     | PSRAM    | JPEG frame buffer                 |
-| RGB decode buf  | 230 KB      | PSRAM    | Decoded RGB888 (320×240×3)       |
-| Resize scratch  | 150 KB      | PSRAM    | Buffer trung gian 224×224×3      |
+| Vùng nhớ      | Kích thước | Vị trí | Mục đích                      |
+| --------------- | ------------- | -------- | -------------------------------- |
+| Model weights   | 3.5 MB        | Flash    | `g_trash_model_data[]` in DROM |
+| Tensor Arena    | 350 KB        | SRAM*    | Activation buffers khi inference |
+| Camera FB (×2) | ~230 KB       | PSRAM    | JPEG frame buffer                |
+| RGB decode buf  | 230 KB        | PSRAM    | Decoded RGB888 (320×240×3)     |
+| Resize scratch  | 150 KB        | PSRAM    | Buffer trung gian 224×224×3    |
 
 *Tensor Arena: ưu tiên SRAM (nhanh hơn 3×), tự động fallback sang PSRAM nếu không đủ.
 
@@ -334,38 +340,38 @@ I (1234) main_functions: ──────────────────�
 
 ## Classes (TrashNet 6 nhãn)
 
-| Index | Nhãn      | Tiếng Việt           |
-|-------|-----------|----------------------|
+| Index | Nhãn     | Tiếng Việt                  |
+| ----- | --------- | ----------------------------- |
 | 0     | Cardboard | Bìa các-tông / giấy cứng |
-| 1     | Glass     | Thủy tinh             |
-| 2     | Metal     | Kim loại              |
-| 3     | Paper     | Giấy                  |
-| 4     | Plastic   | Nhựa                  |
-| 5     | Trash     | Rác hỗn hợp           |
+| 1     | Glass     | Thủy tinh                    |
+| 2     | Metal     | Kim loại                     |
+| 3     | Paper     | Giấy                         |
+| 4     | Plastic   | Nhựa                         |
+| 5     | Trash     | Rác hỗn hợp                |
 
 ---
 
 ## Troubleshooting
 
-**`AllocateTensors()` FAILED**  
+**`AllocateTensors()` FAILED**
 → Tăng `kTensorArenaSize` trong `main_functions.cc`. Thử 450KB trước.
 
-**Camera init failed**  
+**Camera init failed**
 → Kiểm tra GPIO. Chạy `idf menuconfig` → Camera Module Selection.
 
-**Inference rất chậm (>500ms)**  
-→ Kiểm tra `CONFIG_NN_OPTIMIZED=y` trong `sdkconfig`.  
+**Inference rất chậm (>500ms)**
+→ Kiểm tra `CONFIG_NN_OPTIMIZED=y` trong `sdkconfig`.
 → Đảm bảo CPU ở 240MHz: `idf menuconfig` → `ESP System Settings → CPU frequency`.
 
-**Input tensor type không khớp**  
-→ Mở `main_functions.cc` xem `s_input->type`:  
-  - `kTfLiteFloat32` = model float (hiện tại), input dùng `s_input->data.f`  
-  - `kTfLiteInt8` = model INT8, input dùng `s_input->data.int8`
+**Input tensor type không khớp**→ Mở `main_functions.cc` xem `s_input->type`:
 
-**Low confidence liên tục (<50%)**  
-→ Giảm `kConfidenceThreshold` trong `model_settings.h`.  
+- `kTfLiteFloat32` = model float (hiện tại), input dùng `s_input->data.f`
+- `kTfLiteInt8` = model INT8, input dùng `s_input->data.int8`
+
+**Low confidence liên tục (<50%)**
+→ Giảm `kConfidenceThreshold` trong `model_settings.h`.
 → Đảm bảo ánh sáng đủ, vật thể chiếm >60% khung hình.
 
-**Partition table overflow khi build**  
-→ Kiểm tra kích thước firmware: `ls -lh build/trash_classifier.bin`  
+**Partition table overflow khi build**
+→ Kiểm tra kích thước firmware: `ls -lh build/trash_classifier.bin`
 → Tăng kích thước OTA slot trong `partitions.csv` (hiện tại: 4.5MB = `0x480000`)
