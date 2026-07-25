@@ -80,34 +80,28 @@ tflite::MicroInterpreter* s_interpreter = nullptr;
 TfLiteTensor* s_input = nullptr;
 
 // ---------------------------------------------------------------------------
-// Tensor Arena – working memory for all tensors during inference.
+// Tensor Arena size selection:
 //
-// Size estimation for MobileNetV1 1.0 224×224 INT8:
-//   - Activation buffers  ≈ 250–300 KB (largest intermediate feature maps)
-//   - Scratch buffers      ≈  40–60  KB (esp-nn kernel temporaries)
-//   Total                 ≈ 300–360 KB
+//  INT8 model  (full quantized):   input 147KB + activations ~200KB ≈ 350KB
+//  FLOAT32 model (hybrid quant):   input 588KB + activations ~200KB ≈ 788KB
 //
-// Strategy:
-//   1. Allocate from INTERNAL SRAM (fastest).
-//   2. If SRAM is insufficient, fall back to PSRAM (3× slower but larger).
+// We size for FLOAT32 worst-case (768 KB) and allocate from PSRAM.
+// The ESP32-S3 N16R8 has 8 MB PSRAM so this is fine.
+// Inference is ~3× slower from PSRAM vs SRAM, but accuracy is unaffected.
 //
-// After successful AllocateTensors() log: interpreter->arena_used_bytes()
-// to find the exact minimum and reduce kTensorArenaSize accordingly.
+// If you convert the model to full-INT8, you can drop this to 400 KB and
+// use SRAM for faster inference.
 // ---------------------------------------------------------------------------
 
 #if CONFIG_NN_OPTIMIZED
-// ESP-NN kernel scratch buffer (required for optimised depthwise conv)
 constexpr int kScratchBufSize = 60 * 1024;  // 60 KB
 #else
 constexpr int kScratchBufSize = 0;
 #endif
 
-// Total arena: activation memory + scratch
-// Adjust this value based on AllocateTensors() result.
-// 350 KB covers MobileNetV1 1.0 @ 224×224 with optimised kernels.
-constexpr int kTensorArenaSize = 350 * 1024 + kScratchBufSize;
+// 768 KB covers FLOAT32 I/O MobileNetV1 224×224 (input alone = 588 KB)
+constexpr int kTensorArenaSize = 768 * 1024 + kScratchBufSize;
 
-// Arena storage – try to place in SRAM first (see setup() for allocation logic)
 static uint8_t* s_tensor_arena = nullptr;
 
 }  // anonymous namespace
@@ -139,25 +133,28 @@ void setup() {
     ESP_LOGI(TAG, "Model loaded from flash (%u bytes)", g_trash_model_data_len);
 
     // ── 2. Allocate Tensor Arena ───────────────────────────────────────────
-    // First attempt: internal SRAM (fastest for inference)
+    // PSRAM first: FLOAT32 I/O model needs 588KB for input alone, which exceeds
+    // the typical ~300KB of free internal SRAM after FreeRTOS + WiFi stack.
     if (!s_tensor_arena) {
-        s_tensor_arena = (uint8_t*)heap_caps_malloc(
-            kTensorArenaSize,
-            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    // Second attempt: PSRAM if SRAM insufficient
-    if (!s_tensor_arena) {
-        ESP_LOGW(TAG, "SRAM arena failed, retrying with PSRAM");
         s_tensor_arena = (uint8_t*)heap_caps_malloc(
             kTensorArenaSize,
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    // Fallback: internal SRAM (only works for INT8 models with smaller arena)
+    if (!s_tensor_arena) {
+        ESP_LOGW(TAG, "PSRAM arena failed, retrying with internal SRAM");
+        s_tensor_arena = (uint8_t*)heap_caps_malloc(
+            kTensorArenaSize,
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!s_tensor_arena) {
         ESP_LOGE(TAG, "FATAL: Cannot allocate tensor arena (%d bytes)",
                  kTensorArenaSize);
         return;
     }
-    ESP_LOGI(TAG, "Tensor arena: %d KB allocated", kTensorArenaSize / 1024);
+    ESP_LOGI(TAG, "Tensor arena: %d KB allocated from %s",
+             kTensorArenaSize / 1024,
+             heap_caps_get_allocated_size(s_tensor_arena) > 0 ? "PSRAM" : "SRAM");
 
     // ── 3. Register TFLite Micro operations ───────────────────────────────
     //
