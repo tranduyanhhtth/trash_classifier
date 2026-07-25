@@ -25,20 +25,22 @@
 #include "esp_timer.h"
 
 #if CLI_ONLY_INFERENCE
-#define IMAGE_COUNT 10
+// 12 images = 2 per class (cardboard/glass/metal/paper/plastic/trash)
+#define IMAGE_COUNT 12
 static uint8_t *image_database[IMAGE_COUNT];
 
-
-extern const uint8_t image0_start[]   asm("_binary_image0_start");
-extern const uint8_t image1_start[]   asm("_binary_image1_start");
-extern const uint8_t image2_start[]   asm("_binary_image2_start");
-extern const uint8_t image3_start[]   asm("_binary_image3_start");
-extern const uint8_t image4_start[]   asm("_binary_image4_start");
-extern const uint8_t image5_start[]   asm("_binary_image5_start");
-extern const uint8_t image6_start[]   asm("_binary_image6_start");
-extern const uint8_t image7_start[]   asm("_binary_image7_start");
-extern const uint8_t image8_start[]   asm("_binary_image8_start");
-extern const uint8_t image9_start[]   asm("_binary_image9_start");
+extern const uint8_t image0_start[]   asm("_binary_image0_start");  // cardboard×1
+extern const uint8_t image1_start[]   asm("_binary_image1_start");  // glass×1
+extern const uint8_t image2_start[]   asm("_binary_image2_start");  // metal×1
+extern const uint8_t image3_start[]   asm("_binary_image3_start");  // paper×1
+extern const uint8_t image4_start[]   asm("_binary_image4_start");  // plastic×1
+extern const uint8_t image5_start[]   asm("_binary_image5_start");  // trash×1
+extern const uint8_t image6_start[]   asm("_binary_image6_start");  // cardboard×2
+extern const uint8_t image7_start[]   asm("_binary_image7_start");  // glass×2
+extern const uint8_t image8_start[]   asm("_binary_image8_start");  // metal×2
+extern const uint8_t image9_start[]   asm("_binary_image9_start");  // plastic×2
+extern const uint8_t image10_start[]  asm("_binary_image10_start"); // paper×2
+extern const uint8_t image11_start[]  asm("_binary_image11_start"); // trash×2
 #endif
 
 static const char *TAG = "[esp_cli]";
@@ -110,7 +112,7 @@ static int inference_cli_handler(int argc, char *argv[])
     int image_number = atoi(argv[1]);
 
     if((image_number < 0) || (image_number >= IMAGE_COUNT)) {
-        ESP_LOGE(TAG, "Please Enter a valid Number ( 0 - %d)", IMAGE_COUNT-1);
+        ESP_LOGE(TAG, "Please Enter a valid Number ( 0 - %d) | 0-5: sample 1, 6-11: sample 2", IMAGE_COUNT-1);
         return -1;
     }
    // char file_name[30];
@@ -127,8 +129,10 @@ static int inference_cli_handler(int argc, char *argv[])
 int esp_cli_register_inference_command() {
     esp_console_cmd_t command = {
         .command = "detect_image",
-        .help = "detect_image <image_number>"
-                "Note: image numbers ranging from 0 - 9 only are valid",
+        .help = "detect_image <image_number>\n"
+                "  image_number: 0-11 (12 images, 2 per class)\n"
+                "  0=cardboard  1=glass  2=metal  3=paper  4=plastic  5=trash\n"
+                "  6=cardboard2 7=glass2 8=metal2 9=plastic2 10=paper2 11=trash2",
         .func = inference_cli_handler,
     };
     esp_console_cmd_register(&command);
@@ -168,16 +172,18 @@ int esp_cli_register_cmds()
 static void image_database_init()
 {
 #if CLI_ONLY_INFERENCE
-    image_database[0] = (uint8_t *) image0_start;
-    image_database[1] = (uint8_t *) image1_start;
-    image_database[2] = (uint8_t *) image2_start;
-    image_database[3] = (uint8_t *) image3_start;
-    image_database[4] = (uint8_t *) image4_start;
-    image_database[5] = (uint8_t *) image5_start;
-    image_database[6] = (uint8_t *) image6_start;
-    image_database[7] = (uint8_t *) image7_start;
-    image_database[8] = (uint8_t *) image8_start;
-    image_database[9] = (uint8_t *) image9_start;
+    image_database[0]  = (uint8_t *) image0_start;   // cardboard×1
+    image_database[1]  = (uint8_t *) image1_start;   // glass×1
+    image_database[2]  = (uint8_t *) image2_start;   // metal×1
+    image_database[3]  = (uint8_t *) image3_start;   // paper×1
+    image_database[4]  = (uint8_t *) image4_start;   // plastic×1
+    image_database[5]  = (uint8_t *) image5_start;   // trash×1
+    image_database[6]  = (uint8_t *) image6_start;   // cardboard×2
+    image_database[7]  = (uint8_t *) image7_start;   // glass×2
+    image_database[8]  = (uint8_t *) image8_start;   // metal×2
+    image_database[9]  = (uint8_t *) image9_start;   // plastic×2
+    image_database[10] = (uint8_t *) image10_start;  // paper×2
+    image_database[11] = (uint8_t *) image11_start;  // trash×2
 #endif
 }
 

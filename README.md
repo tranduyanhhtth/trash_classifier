@@ -380,7 +380,7 @@ I (1234) main_functions: ──────────────────�
 
 ## Training
 
-Notebook huấn luyện nằm tại `models/training/pruning-and-quantization-in-keras.ipynb`.  
+Notebook huấn luyện nằm tại `models/training/pruning-and-quantization-in-keras.ipynb`.
 Dataset TrashNet (không được track bởi git vì kích thước lớn) đặt tại:
 
 ```
@@ -398,6 +398,7 @@ models/training/
 ```
 
 Để có dataset, giải nén:
+
 ```bash
 cd models/training && unzip dataset-resized.zip
 ```
@@ -410,20 +411,20 @@ cd models/training && unzip dataset-resized.zip
 
 Hệ thống ảnh test gồm **3 thành phần phải đồng bộ**:
 
-| File | Vai trò |
-|------|---------|
-| `static_images/CMakeLists.txt` | Khai báo EMBED_FILES → nhúng vào firmware |
-| `main/esp_cli.c` | `IMAGE_COUNT`, extern symbols, `image_database[]` |
-| `static_images/sample_images/imageN` | File raw RGB888, 224×224×3 = 150,528 bytes |
+| File                                   | Vai trò                                              |
+| -------------------------------------- | ----------------------------------------------------- |
+| `static_images/CMakeLists.txt`       | Khai báo EMBED_FILES → nhúng vào firmware         |
+| `main/esp_cli.c`                     | `IMAGE_COUNT`, extern symbols, `image_database[]` |
+| `static_images/sample_images/imageN` | File raw RGB888, 224×224×3 = 150,528 bytes          |
 
-> **Tại sao hiện tại là 10 ảnh?**  
-> Kế thừa từ `person_detection` gốc của Espressif (2 class × 5 ảnh = 10).  
-> Với 6 class, 10 ảnh nghĩa là 4 class có 2 mẫu, 2 class chỉ có 1 mẫu — không đều.  
+> **Tại sao hiện tại là 10 ảnh?**
+> Kế thừa từ `person_detection` gốc của Espressif (2 class × 5 ảnh = 10).
+> Với 6 class, 10 ảnh nghĩa là 4 class có 2 mẫu, 2 class chỉ có 1 mẫu — không đều.
 > Số ảnh tối ưu cho trash_classifier là **bội số của 6** (6, 12, 18…).
 
-> **Lưu ý bộ nhớ:**  
-> Mỗi ảnh 224×224 RGB = 147 KB được **nhúng thẳng vào firmware binary** (DROM).  
-> Firmware hiện tại ≈ 4.0 MB. Partition OTA = 4.5 MB → còn ~500 KB dư.  
+> **Lưu ý bộ nhớ:**
+> Mỗi ảnh 224×224 RGB = 147 KB được **nhúng thẳng vào firmware binary** (DROM).
+> Firmware hiện tại ≈ 4.0 MB. Partition OTA = 4.5 MB → còn ~500 KB dư.
 > Tối đa thêm được: 500 KB ÷ 147 KB ≈ **3 ảnh nữa** trước khi cần tăng partition.
 
 #### Ví dụ: đổi thành 12 ảnh (2 ảnh/class, cân bằng hoàn toàn)
@@ -501,7 +502,7 @@ ls -lh build/trash_classifier.bin
 
 ### B – Thêm loại rác mới (tăng số class)
 
-Đây là thay đổi **toàn diện** — cần sửa model, code, và ảnh test.  
+Đây là thay đổi **toàn diện** — cần sửa model, code, và ảnh test.
 Ví dụ: thêm class **"Battery"** (pin) thành class thứ 7.
 
 #### B1 – Chuẩn bị dataset và retrain
@@ -585,11 +586,10 @@ idf flash -p /dev/ttyACM0
 
 ## Quy tắc tổng quát
 
-| Muốn làm gì | Files cần sửa |
-|-------------|--------------|
-| Thêm/bớt ảnh test | `static_images/CMakeLists.txt` + `main/esp_cli.c` + file raw |
-| Đổi ảnh test (cùng số lượng) | Chỉ thay file raw, build lại |
-| Thêm/bớt class | `model_settings.h/cc` + retrain + nhúng model mới + thêm ảnh test |
-| Thay model (cùng class, cùng resolution) | Chỉ `./generate_model_cc.sh` + build lại |
-| Đổi resolution input | `model_settings.h` (kNumCols/kNumRows) + retrain + convert ảnh |
-
+| Muốn làm gì                             | Files cần sửa                                                         |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| Thêm/bớt ảnh test                       | `static_images/CMakeLists.txt` + `main/esp_cli.c` + file raw        |
+| Đổi ảnh test (cùng số lượng)        | Chỉ thay file raw, build lại                                          |
+| Thêm/bớt class                           | `model_settings.h/cc` + retrain + nhúng model mới + thêm ảnh test |
+| Thay model (cùng class, cùng resolution) | Chỉ`./generate_model_cc.sh` + build lại                             |
+| Đổi resolution input                     | `model_settings.h` (kNumCols/kNumRows) + retrain + convert ảnh       |
