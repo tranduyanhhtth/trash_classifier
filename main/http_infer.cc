@@ -342,7 +342,7 @@ esp_err_t http_infer_server_start(void)
     config.max_uri_handlers      = 8;
     config.recv_wait_timeout     = 30;   /* seconds */
     config.send_wait_timeout     = 30;
-    config.stack_size            = 8192;
+    config.stack_size            = 32768;  /* 32 KB: httpd + TFLite Invoke() esp_nn chain */
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
