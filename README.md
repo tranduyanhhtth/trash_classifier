@@ -204,8 +204,8 @@ I (xxx) main_functions: ==============================================
 I (xxx) main_functions: Categories  : 6
 I (xxx) main_functions: [0] Cardboard  [1] Glass  [2] Metal
 I (xxx) main_functions: [3] Paper      [4] Plastic [5] Trash
-I (xxx) main_functions: Model loaded from flash (3516000 bytes)
-I (xxx) main_functions: Tensor arena: 828 KB allocated from PSRAM
+I (xxx) main_functions: Model loaded from flash (3824888 bytes)
+I (xxx) main_functions: Tensor arena: 1280 KB allocated from PSRAM
 I (xxx) main_functions: Input tensor: [1,224,224,3] INT8 scale=0.008 zp=-1
 I (xxx) main_functions: Setup complete – HTTP inference server ready
 I (xxx) wifi_ap: WiFi AP started  SSID: TrashNet-ESP32  IP: 192.168.4.1
@@ -256,14 +256,15 @@ Truy cập `http://192.168.4.1` trên trình duyệt → giao diện upload ản
 | Vùng nhớ       | Kích thước | Vị trí | Mục đích                          |
 | --------------- | ----------- | ------- | ---------------------------------- |
 | Model weights   | ~3.5 MB     | Flash   | `g_trash_model_data[]` in DROM    |
-| Tensor Arena    | 828 KB      | PSRAM   | Activation + scratch buffers      |
+| Tensor Arena    | 1280 KB     | PSRAM   | Activation + scratch buffers      |
 | WiFi / stack    | ~100 KB     | SRAM    | FreeRTOS + LwIP + WiFi driver     |
 | HTTP server     | ~20 KB      | SRAM    | esp_http_server                   |
 | JPEG decode buf | ~920 KB     | PSRAM   | Decode JPEG ảnh upload            |
 
 > **Tại sao arena từ PSRAM?**
-> Full INT8 model: input tensor = 224×224×3×1 = 147 KB + activation buffers ~680 KB.
-> Tổng cần ~828 KB, vượt quá SRAM nội bộ có sẵn. PSRAM 8 MB của N16R8 đủ thừa.
+> Full INT8 model với Flatten(): SHAPE+STRIDED_SLICE+PACK tạo nhiều scratch tensor.
+> Tổng đo thực tế: 1,206,848 bytes (1,179 KB). Dùng 1280 KB để có ~8% headroom.
+> PSRAM 8 MB của N16R8 đủ thừa. (Dùng GlobalAveragePooling2D thay Flatten → giảm xuống ~200 KB)
 
 ---
 
@@ -340,16 +341,33 @@ cd models/training && unzip dataset-resized.zip
 ```
 Dataset → retrain_int8.py → trash_model_int8.tflite
                                     ↓
+                         python3 models/check_ops.py    ← verify ops trước khi build!
+                                    ↓
                          generate_model_cc.sh
                                     ↓
-                         main/trash_model_data.cc  (C array)
+                         main/trash_model_data.cc  (C array, alignas(8))
                                     ↓
-                              idf build + flash
+                               idf build + flash
 ```
 
-Tại sao không dùng notebook gốc? Notebook lưu model vào `tempfile.mkstemp()` nên
-file bị xoá khi đóng session. `retrain_int8.py` rebuild cùng kiến trúc (MobileNetV1 +
-Flatten + Dense(6)) và convert thẳng sang full INT8 mà không qua hybrid.
+**Tại sao dùng `retrain_int8.py` thay notebook gốc?**
+- Notebook lưu model vào `tempfile.mkstemp()` → file bị xoá khi đóng session
+- `retrain_int8.py` dùng **`preprocess_input`** (MobileNet chuẩn: [0,255]→[-1,1])
+  vs notebook gốc dùng `rescale=1/255` ([0,1]) → accuracy thấp hơn ~20-25%
+- Convert thẳng sang full INT8 với `inference_input_type=tf.int8`
+
+**Model hiện tại (sau retrain):**
+- Input: `[1,224,224,3]` INT8  `scale=0.007843  zp=-1`  (range ≈ [-1,1])
+- Output: `[1,6]` INT8  `scale=0.003906  zp=-128`
+- Ops: `CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, SHAPE, STRIDED_SLICE, PACK, RESHAPE, SOFTMAX`
+- Array: `alignas(8) const unsigned char g_trash_model_data[]` (khớp person_detect_model_data.cc)
+
+**ESP32 preprocessing (không cần thay đổi):**
+```cpp
+// uint8 [0,255] → int8 [-128,127] via XOR 0x80 (pixel - 128)
+// Với scale=0.00784, zp=-1: maps pixel=0→-1.0, pixel=128→0.0, pixel=255→+1.0
+s_input->data.int8[i] = (int8_t)(raw_pixels[i] ^ 0x80);  // ✅ đúng
+```
 
 ---
 
